@@ -1,0 +1,24 @@
+{
+  "ucp": {
+    "blades": {
+      "hello-world": {
+        "title": "Hello world blade"
+      }
+    }
+  },
+  "permissions": {
+    "ucp:access": "Open UCP menu",
+    "ucp:create": "Create UCP related data",
+    "ucp:read": "View UCP related data",
+    "ucp:update": "Update UCP related data",
+    "ucp:delete": "Delete UCP related data"
+  },
+  "settings": {
+    "UCP": {
+      "Enabled": {
+        "title": "UCP Enabled",
+        "description": "UCP Enabled setting"
+      }
+    }
+  }
+}

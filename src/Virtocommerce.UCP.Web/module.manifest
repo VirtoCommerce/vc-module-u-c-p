@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<module>
+  <id>Virtocommerce.UCP</id>
+  <version>0.1.0</version>
+  <version-tag></version-tag>
+
+  <platformVersion>3.1000.0</platformVersion>
+  <dependencies>
+    <dependency id="VirtoCommerce.Xapi" version="3.1001.0" />
+  </dependencies>
+
+  <title>VirtoCommerce UCP</title>
+  <description>VirtoCommerce UCP</description>
+
+  <authors>
+    <author>VirtoCommerce</author>
+  </authors>
+  <owners>
+    <owner>VirtoCommerce</owner>
+  </owners>
+
+  <projectUrl>https://github.com/VirtoCommerce/vc-module-ucp</projectUrl>
+  <iconUrl>Modules/$(Virtocommerce.UCP)/Content/logo.png</iconUrl>
+  <requireLicenseAcceptance>false</requireLicenseAcceptance>
+
+  <assemblyFile>Virtocommerce.UCP.Web.dll</assemblyFile>
+  <moduleType>Virtocommerce.UCP.Web.Module, Virtocommerce.UCP.Web</moduleType>
+
+  <releaseNotes>First version.</releaseNotes>
+  <copyright>Copyright © 2026 VirtoCommerce. All rights reserved</copyright>
+  <tags>extension module</tags>
+  <useFullTypeNameInSwagger>false</useFullTypeNameInSwagger>
+</module>
