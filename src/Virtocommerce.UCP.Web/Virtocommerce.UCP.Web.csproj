@@ -26,4 +26,11 @@
     <ProjectReference Include="..\Virtocommerce.UCP.Data.SqlServer\Virtocommerce.UCP.Data.SqlServer.csproj" />
     <ProjectReference Include="..\Virtocommerce.UCP.ExperienceApi\Virtocommerce.UCP.ExperienceApi.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="VirtoCommerce.XCatalog.Core" Version="3.945.0" />
+    <PackageReference Include="VirtoCommerce.XCatalog.Data" Version="3.945.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="module.manifest" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

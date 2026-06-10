@@ -12,11 +12,14 @@ using VirtoCommerce.Platform.Data.SqlServer.Extensions;
 using VirtoCommerce.Xapi.Core.Extensions;
 using VirtoCommerce.Xapi.Core.Infrastructure;
 using Virtocommerce.UCP.Core;
+using Virtocommerce.UCP.Core.Options;
+using Virtocommerce.UCP.Core.Services;
 using Virtocommerce.UCP.Data.MySql;
 using Virtocommerce.UCP.Data.PostgreSql;
 using Virtocommerce.UCP.Data.Repositories;
 using Virtocommerce.UCP.Data.SqlServer;
 using Virtocommerce.UCP.ExperienceApi;
+using Virtocommerce.UCP.Web.Services;
 
 namespace Virtocommerce.UCP.Web;
 
@@ -50,8 +53,12 @@ public class Module : IModule, IHasConfiguration
         //AbstractTypeFactory<OriginalModel>.OverrideType<OriginalModel, ExtendedModel>().MapToType<ExtendedEntity>();
         //AbstractTypeFactory<OriginalEntity>.OverrideType<OriginalEntity, ExtendedEntity>();
 
-        // Register services
-        //serviceCollection.AddTransient<IMyService, MyService>();
+        serviceCollection.AddHttpContextAccessor();
+        serviceCollection.Configure<UcpOptions>(Configuration.GetSection("UCP"));
+
+        serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
+        serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();
+        serviceCollection.AddTransient<IXApiInProcessExecutor, XApiInProcessExecutor>();
 
         // Register GraphQL schema
         _ = new GraphQLBuilder(serviceCollection, builder =>
