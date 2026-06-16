@@ -1,4 +1,9 @@
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Virtocommerce.UCP.Core.Models;
+using Virtocommerce.UCP.Core.Services;
 
 namespace Virtocommerce.UCP.Web.Controllers.Api;
 
@@ -6,27 +11,63 @@ namespace Virtocommerce.UCP.Web.Controllers.Api;
 [Route("ucp/v1/checkouts")]
 public class UcpCheckoutController : UcpControllerBase
 {
-    [HttpPost]
-    public IActionResult CreateCheckout()
+    private readonly IUcpCheckoutService _checkoutService;
+
+    public UcpCheckoutController(IUcpCheckoutService checkoutService)
     {
-        return NotImplementedError("Checkout session creation will be implemented after cart assembly.");
+        _checkoutService = checkoutService;
+    }
+
+    [HttpPost]
+    [ProducesResponseType(typeof(UcpCheckoutResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<UcpCheckoutResponse>> CreateCheckout([FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await _checkoutService.CreateCheckoutAsync(request, cancellationToken));
+        }
+        catch (UcpException exception)
+        {
+            return StatusCode(exception.StatusCode, exception.Error);
+        }
     }
 
     [HttpPatch("{checkoutId}")]
     public IActionResult UpdateCheckout(string checkoutId)
     {
-        return NotImplementedError("Checkout update will be implemented after checkout session creation.", new { checkout_id = checkoutId });
+        return NotImplementedError("Checkout update is not available in this version.", new { checkout_id = checkoutId });
     }
 
     [HttpGet("{checkoutId}/payment-handlers")]
-    public IActionResult GetPaymentHandlers(string checkoutId)
+    [ProducesResponseType(typeof(UcpPaymentHandlersResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
+    public async Task<ActionResult<UcpPaymentHandlersResponse>> GetPaymentHandlers(string checkoutId, CancellationToken cancellationToken)
     {
-        return NotImplementedError("Payment handler negotiation will be implemented in the checkout slice.", new { checkout_id = checkoutId });
+        try
+        {
+            return Ok(await _checkoutService.GetPaymentHandlersAsync(checkoutId, cancellationToken));
+        }
+        catch (UcpException exception)
+        {
+            return StatusCode(exception.StatusCode, exception.Error);
+        }
     }
 
     [HttpPost("{checkoutId}/handoff")]
-    public IActionResult HandoffCheckout(string checkoutId)
+    [ProducesResponseType(typeof(UcpCheckoutHandoffResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<UcpCheckoutHandoffResponse>> HandoffCheckout(string checkoutId, [FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        return NotImplementedError("Checkout handoff will be implemented after checkout session state.", new { checkout_id = checkoutId });
+        try
+        {
+            return Ok(await _checkoutService.HandoffCheckoutAsync(checkoutId, request, cancellationToken));
+        }
+        catch (UcpException exception)
+        {
+            return StatusCode(exception.StatusCode, exception.Error);
+        }
     }
 }

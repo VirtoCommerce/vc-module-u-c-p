@@ -27,8 +27,13 @@
     <ProjectReference Include="..\Virtocommerce.UCP.ExperienceApi\Virtocommerce.UCP.ExperienceApi.csproj" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="VirtoCommerce.XCatalog.Core" Version="3.945.0" />
-    <PackageReference Include="VirtoCommerce.XCatalog.Data" Version="3.945.0" />
+    <PackageReference Include="VirtoCommerce.XCatalog.Core" Version="3.1000.0" />
+    <PackageReference Include="VirtoCommerce.XCatalog.Data" Version="3.1000.0" />
+    <PackageReference Include="VirtoCommerce.XCart.Core" Version="3.1016.0" />
+    <PackageReference Include="VirtoCommerce.XCart.Data" Version="3.1016.0" />
+    <PackageReference Include="VirtoCommerce.XOrder.Data" Version="3.1000.0" />
+    <PackageReference Include="VirtoCommerce.OrdersModule.Core" Version="3.1000.0" />
+    <PackageReference Include="VirtoCommerce.StoreModule.Core" Version="3.1004.0" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="module.manifest" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

@@ -1,0 +1,280 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Options;
+using VirtoCommerce.OrdersModule.Core.Model;
+using VirtoCommerce.OrdersModule.Core.Model.Search;
+using VirtoCommerce.OrdersModule.Core.Services;
+using Virtocommerce.UCP.Core;
+using Virtocommerce.UCP.Core.Models;
+using Virtocommerce.UCP.Core.Options;
+using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Services;
+using Xunit;
+
+namespace Virtocommerce.UCP.Tests;
+
+[Trait("Category", "Unit")]
+public class UcpOrderServiceTests
+{
+    [Fact]
+    public async Task TrackOrderAsync_ByCartId_FindsOrderByShoppingCartIdWithoutXOrderSession()
+    {
+        var order = CreateOrder("order-1", "cart-1", "buyer-1");
+        var orderSearchService = new StubCustomerOrderSearchService(order);
+        var service = CreateService(orderSearchService: orderSearchService);
+
+        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        {
+            CartId = "cart-1",
+            Context = new UcpCartContext
+            {
+                BuyerId = "buyer-1",
+                Language = "en-US",
+            },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("order-1", response.Order.Id);
+        Assert.Equal("CO123", response.Order.Number);
+        Assert.Equal("Completed", response.Order.Status);
+        Assert.Equal("cart-1", response.Order.CartId);
+        Assert.Equal("buyer-1", response.Order.BuyerId);
+        Assert.Equal(129900, response.Order.Totals.Total.Amount);
+        Assert.Single(response.Order.LineItems);
+        Assert.Single(response.Order.Shipments);
+        Assert.Single(response.Order.Payments);
+        Assert.Equal("UPS", response.Order.Shipments[0].ShipmentMethodCode);
+        Assert.Equal("1Z999", response.Order.Shipments[0].TrackingNumber);
+        Assert.Contains(response.Messages, x => x.Code == "shipment_tracking_available");
+
+        var criteria = orderSearchService.Criteria.Single();
+        Assert.Equal("buyer-1", criteria.CustomerId);
+        Assert.Equal(50, criteria.Take);
+        Assert.Equal("CreatedDate:desc", criteria.Sort);
+        Assert.Equal(CustomerOrderResponseGroup.Full.ToString(), criteria.ResponseGroup);
+    }
+
+    [Fact]
+    public async Task TrackOrderAsync_ByCartId_ReturnsStructuredNotFound()
+    {
+        var orderSearchService = new StubCustomerOrderSearchService(CreateOrder("order-1", "another-cart", "buyer-1"));
+        var service = CreateService(orderSearchService: orderSearchService);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrderAsync(new UcpOrderTrackingRequest
+        {
+            CartId = "missing-cart",
+            Context = new UcpCartContext { BuyerId = "buyer-1" },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.OrderNotFound, exception.Code);
+        Assert.Equal(404, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task TrackOrderAsync_ByCartId_FallsBackToShoppingCartIdWhenGuestBuyerChanged()
+    {
+        var order = CreateOrder("order-1", "cart-1", "storefront-guest");
+        var orderSearchService = new StubCustomerOrderSearchService(order);
+        var service = CreateService(orderSearchService: orderSearchService);
+
+        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        {
+            CartId = "cart-1",
+            Context = new UcpCartContext { BuyerId = "ucp-anonymous-original" },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("order-1", response.Order.Id);
+        Assert.Equal(2, orderSearchService.Criteria.Count);
+        Assert.Equal("ucp-anonymous-original", orderSearchService.Criteria[0].CustomerId);
+        Assert.Null(orderSearchService.Criteria[1].CustomerId);
+    }
+
+    [Fact]
+    public async Task TrackOrderAsync_ByOrderId_UsesOrdersService()
+    {
+        var orderService = new StubCustomerOrderService(CreateOrder("order-1", "cart-1", "buyer-1"));
+        var service = CreateService(orderService: orderService);
+
+        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        {
+            OrderId = "order-1",
+            Context = new UcpCartContext { BuyerId = "buyer-1" },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("order-1", response.Order.Id);
+        Assert.Equal("cart-1", response.Order.CartId);
+        Assert.Equal("order-1", orderService.RequestedIds.Single());
+    }
+
+    private static UcpOrderService CreateService(
+        ICustomerOrderService orderService = null,
+        ICustomerOrderSearchService orderSearchService = null)
+    {
+        var httpContextAccessor = new HttpContextAccessor
+        {
+            HttpContext = new DefaultHttpContext(),
+        };
+        httpContextAccessor.HttpContext.TraceIdentifier = "trace-order";
+
+        return new UcpOrderService(
+            orderService ?? new StubCustomerOrderService(),
+            orderSearchService ?? new StubCustomerOrderSearchService(),
+            httpContextAccessor,
+            Options.Create(new UcpOptions
+            {
+                DefaultCultureName = "en-US",
+            }));
+    }
+
+    private static CustomerOrder CreateOrder(string id, string cartId, string buyerId)
+    {
+        var address = new Address
+        {
+            Key = "addr-1",
+            Name = "Ada Buyer",
+            FirstName = "Ada",
+            LastName = "Buyer",
+            Line1 = "1 Main St",
+            City = "Seattle",
+            CountryCode = "US",
+            CountryName = "United States",
+            RegionId = "WA",
+            RegionName = "Washington",
+            PostalCode = "98101",
+            Phone = "555-0100",
+            Email = "ada@example.test",
+        };
+
+        return new CustomerOrder
+        {
+            Id = id,
+            Number = "CO123",
+            ShoppingCartId = cartId,
+            StoreId = "store-acme",
+            CustomerId = buyerId,
+            CustomerName = "Ada Buyer",
+            CreatedDate = DateTime.Parse("2026-06-16T09:00:00Z").ToUniversalTime(),
+            Status = "Completed",
+            Currency = "USD",
+            SubTotal = 1299m,
+            Total = 1299m,
+            Items =
+            [
+                new LineItem
+                {
+                    Id = "line-1",
+                    ImageUrl = "https://example.test/item.png",
+                    Name = "Samsung Galaxy S26",
+                    ProductId = "product-1",
+                    Quantity = 1,
+                    Sku = "S26-BLK",
+                    Currency = "USD",
+                    Price = 1299m,
+                    PlacedPrice = 1299m,
+                    ExtendedPrice = 1299m,
+                },
+            ],
+            Shipments =
+            [
+                new Shipment
+                {
+                    ShipmentMethodCode = "UPS",
+                    ShipmentMethodOption = "Ground",
+                    TrackingNumber = "1Z999",
+                    TrackingUrl = "https://track.example.test/1Z999",
+                    Currency = "USD",
+                    DeliveryAddress = address,
+                },
+            ],
+            InPayments =
+            [
+                new PaymentIn
+                {
+                    Id = "payment-1",
+                    Number = "PAY123",
+                    IsApproved = true,
+                    GatewayCode = "test",
+                    Currency = "USD",
+                    BillingAddress = address,
+                },
+            ],
+        };
+    }
+
+    private sealed class StubCustomerOrderService : ICustomerOrderService
+    {
+        private readonly IList<CustomerOrder> _orders;
+
+        public StubCustomerOrderService(params CustomerOrder[] orders)
+        {
+            _orders = orders.ToList();
+        }
+
+        public IList<string> RequestedIds { get; } = new List<string>();
+
+        public Task<IList<CustomerOrder>> GetAsync(IList<string> ids, string responseGroup, bool clone)
+        {
+            foreach (var id in ids)
+            {
+                RequestedIds.Add(id);
+            }
+
+            return Task.FromResult<IList<CustomerOrder>>(_orders.Where(order => ids.Contains(order.Id)).ToList());
+        }
+
+        public Task<IList<CustomerOrder>> GetByOuterIdsAsync(IList<string> outerIds, string responseGroup, bool clone)
+        {
+            return Task.FromResult<IList<CustomerOrder>>(new List<CustomerOrder>());
+        }
+
+        public Task SaveChangesAsync(IList<CustomerOrder> models)
+        {
+            return Task.CompletedTask;
+        }
+
+        public Task DeleteAsync(IList<string> ids, bool softDelete)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class StubCustomerOrderSearchService : ICustomerOrderSearchService
+    {
+        private readonly IList<CustomerOrder> _orders;
+
+        public StubCustomerOrderSearchService(params CustomerOrder[] orders)
+        {
+            _orders = orders.ToList();
+        }
+
+        public IList<CustomerOrderSearchCriteria> Criteria { get; } = new List<CustomerOrderSearchCriteria>();
+
+        public Task<CustomerOrderSearchResult> SearchAsync(CustomerOrderSearchCriteria criteria, bool clone)
+        {
+            Criteria.Add(new CustomerOrderSearchCriteria
+            {
+                CustomerId = criteria.CustomerId,
+                OrganizationId = criteria.OrganizationId,
+                Number = criteria.Number,
+                Take = criteria.Take,
+                Sort = criteria.Sort,
+                ResponseGroup = criteria.ResponseGroup,
+            });
+
+            var results = _orders
+                .Where(order => string.IsNullOrWhiteSpace(criteria.CustomerId) || order.CustomerId == criteria.CustomerId)
+                .Where(order => string.IsNullOrWhiteSpace(criteria.OrganizationId) || order.OrganizationId == criteria.OrganizationId)
+                .Where(order => string.IsNullOrWhiteSpace(criteria.Number) || order.Number == criteria.Number)
+                .Take(criteria.Take > 0 ? criteria.Take : _orders.Count)
+                .ToList();
+
+            return Task.FromResult(new CustomerOrderSearchResult
+            {
+                Results = results,
+                TotalCount = results.Count,
+            });
+        }
+    }
+}

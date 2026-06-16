@@ -69,6 +69,8 @@ public class UcpProfileService : IUcpProfileService
                     ModuleConstants.ErrorCodes.InvalidRequest,
                     ModuleConstants.ErrorCodes.MissingStoreId,
                     ModuleConstants.ErrorCodes.ProductNotFound,
+                    ModuleConstants.ErrorCodes.CartNotFound,
+                    ModuleConstants.ErrorCodes.OrderNotFound,
                     ModuleConstants.ErrorCodes.XApiExecutionFailed,
                     ModuleConstants.ErrorCodes.NotImplemented,
                 },
@@ -93,14 +95,14 @@ public class UcpProfileService : IUcpProfileService
         {
             Code = ModuleConstants.PaymentHandlers.NativeCard,
             Available = false,
-            Reason = "requires_mvp2",
+            Reason = "not_available",
             Capability = ModuleConstants.Capabilities.Checkout,
         });
         result.PaymentHandlers.Add(new UcpPaymentHandlerProfile
         {
             Code = ModuleConstants.PaymentHandlers.GooglePay,
             Available = false,
-            Reason = "requires_mvp2",
+            Reason = "not_available",
             Capability = ModuleConstants.Capabilities.Checkout,
         });
 
@@ -112,14 +114,17 @@ public class UcpProfileService : IUcpProfileService
         AddOperation(endpoints, ModuleConstants.McpTools.GetStoreCapabilities, "GET", ModuleConstants.Endpoints.Discovery, "profile", "available");
         AddOperation(endpoints, ModuleConstants.McpTools.SearchProducts, "POST", ModuleConstants.Endpoints.CatalogSearch, ModuleConstants.Capabilities.Catalog, "available");
         AddOperation(endpoints, ModuleConstants.McpTools.GetProduct, "GET", ModuleConstants.Endpoints.CatalogProduct, ModuleConstants.Capabilities.Catalog, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.CreateCart, "POST", ModuleConstants.Endpoints.CartCreate, ModuleConstants.Capabilities.Cart, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.UpdateCart, "PATCH", ModuleConstants.Endpoints.CartUpdate, ModuleConstants.Capabilities.Cart, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.CreateCheckout, "POST", ModuleConstants.Endpoints.CheckoutCreate, ModuleConstants.Capabilities.Checkout, "planned");
+        AddOperation(endpoints, ModuleConstants.McpTools.CreateCart, "POST", ModuleConstants.Endpoints.CartCreate, ModuleConstants.Capabilities.Cart, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.ListCarts, "GET", ModuleConstants.Endpoints.CartList, ModuleConstants.Capabilities.Cart, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.GetCart, "GET", ModuleConstants.Endpoints.CartGet, ModuleConstants.Capabilities.Cart, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.UpdateCart, "PUT", ModuleConstants.Endpoints.CartUpdate, ModuleConstants.Capabilities.Cart, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.CreateCheckout, "POST", ModuleConstants.Endpoints.CheckoutCreate, ModuleConstants.Capabilities.Checkout, "available");
         AddOperation(endpoints, ModuleConstants.McpTools.UpdateCheckout, "PATCH", ModuleConstants.Endpoints.CheckoutUpdate, ModuleConstants.Capabilities.Checkout, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.HandoffCheckout, "POST", ModuleConstants.Endpoints.CheckoutHandoff, ModuleConstants.Capabilities.Checkout, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrack, ModuleConstants.Capabilities.Order, "planned");
-        AddOperation(endpoints, "storefront_restore", "POST", ModuleConstants.Endpoints.StorefrontRestore, ModuleConstants.Capabilities.Checkout, "planned_storefront");
+        AddOperation(endpoints, ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.HandoffCheckout, "POST", ModuleConstants.Endpoints.CheckoutHandoff, ModuleConstants.Capabilities.Checkout, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrack, ModuleConstants.Capabilities.Order, "available");
+        AddOperation(endpoints, ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrackByCart, ModuleConstants.Capabilities.Order, "available");
+        AddOperation(endpoints, "storefront_restore", "POST", ModuleConstants.Endpoints.StorefrontRestore, ModuleConstants.Capabilities.Checkout, "available_storefront");
     }
 
     protected virtual void AddOperation(UcpEndpointProfile endpoints, string name, string method, string path, string capability, string status)
@@ -141,6 +146,8 @@ public class UcpProfileService : IUcpProfileService
         profile.McpTools.Add(ModuleConstants.McpTools.SearchProducts);
         profile.McpTools.Add(ModuleConstants.McpTools.GetProduct);
         profile.McpTools.Add(ModuleConstants.McpTools.CreateCart);
+        profile.McpTools.Add(ModuleConstants.McpTools.ListCarts);
+        profile.McpTools.Add(ModuleConstants.McpTools.GetCart);
         profile.McpTools.Add(ModuleConstants.McpTools.UpdateCart);
         profile.McpTools.Add(ModuleConstants.McpTools.CreateCheckout);
         profile.McpTools.Add(ModuleConstants.McpTools.UpdateCheckout);

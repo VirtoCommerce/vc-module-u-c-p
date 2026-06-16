@@ -35,12 +35,21 @@ public class UcpProfileServiceTests
         Assert.Contains(ModuleConstants.Capabilities.Checkout, profile.Capabilities);
         Assert.Contains(ModuleConstants.Capabilities.Order, profile.Capabilities);
         Assert.Contains(profile.PaymentHandlers, x => x.Code == ModuleConstants.PaymentHandlers.HostedCheckout && x.Available);
-        Assert.Contains(profile.PaymentHandlers, x => x.Code == ModuleConstants.PaymentHandlers.GooglePay && x.Reason == "requires_mvp2");
+        Assert.Contains(profile.PaymentHandlers, x => x.Code == ModuleConstants.PaymentHandlers.GooglePay && x.Reason == "not_available");
         Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.SearchProducts);
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.SearchProducts && x.Status == "available");
-        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.CreateCart && x.Status == "planned");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.CreateCart && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.ListCarts && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.GetCart && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.UpdateCart && x.Method == "PUT" && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.CreateCheckout && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.GetPaymentHandlers && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.HandoffCheckout && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.TrackOrder && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.UpdateCheckout && x.Status == "planned");
         Assert.Equal(ModuleConstants.Headers.CorrelationId, profile.Headers.CorrelationId);
         Assert.Contains(ModuleConstants.ErrorCodes.XApiExecutionFailed, profile.Errors.Codes);
+        Assert.Contains(ModuleConstants.ErrorCodes.OrderNotFound, profile.Errors.Codes);
         Assert.DoesNotContain(profile.Endpoints.Operations, x => x.Path?.Contains("api_key") == true);
     }
 

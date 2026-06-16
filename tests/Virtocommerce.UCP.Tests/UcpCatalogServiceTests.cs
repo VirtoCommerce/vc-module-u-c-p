@@ -142,6 +142,16 @@ public class UcpCatalogServiceTests
                 Json = _json,
             });
         }
+
+        public Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        {
+            return ExecuteAsync(request, cancellationToken);
+        }
+
+        public Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        {
+            return ExecuteAsync(request, cancellationToken);
+        }
     }
 
     private const string SearchResponseJson = """

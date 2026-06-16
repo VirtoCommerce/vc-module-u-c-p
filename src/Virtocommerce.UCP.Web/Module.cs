@@ -58,6 +58,9 @@ public class Module : IModule, IHasConfiguration
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();
+        serviceCollection.AddTransient<IUcpCartService, UcpCartService>();
+        serviceCollection.AddTransient<IUcpCheckoutService, UcpCheckoutService>();
+        serviceCollection.AddTransient<IUcpOrderService, UcpOrderService>();
         serviceCollection.AddTransient<IXApiInProcessExecutor, XApiInProcessExecutor>();
 
         // Register GraphQL schema

@@ -1,21 +1,24 @@
-# Universal Commerce Protocol
+# Virto Commerce UCP Module
 
-Модуль Virto Commerce UCP предоставляет facade Universal Commerce Protocol для agentic commerce сценариев поверх существующих возможностей Virto Commerce Platform.
+Модуль Virto Commerce UCP предоставляет HTTP API для Universal Commerce Protocol поверх существующих возможностей Virto Commerce Platform.
 
-Модуль открывает публичные UCP endpoints для discovery и catalog операций, преобразует protocol requests в in-process вызовы Virto Commerce XAPI и сохраняет scaffold для последующей реализации cart, checkout и order flows.
+Модуль открывает публичные UCP endpoints для discovery, catalog, cart, checkout handoff и order tracking операций. Запросы преобразуются в in-process вызовы Virto Commerce XAPI и сервисов платформы без отдельного HTTP hop внутри platform process.
 
 ## Overview
 
-`Virtocommerce.UCP` - это protocol adapter module. Он не заменяет Catalog, Cart, Orders, XAPI или Store модули. Вместо этого модуль предоставляет компактный UCP-oriented HTTP surface для AI agents и MCP tools, а commerce behavior делегирует существующим Virto Commerce modules.
+`Virtocommerce.UCP` - это protocol adapter module. Он не заменяет Catalog, Cart, Orders, XAPI или Store модули. Модуль предоставляет компактный UCP-oriented HTTP surface для внешних клиентов и MCP tools, а commerce behavior делегирует существующим Virto Commerce modules.
 
 Текущая реализация покрывает:
 
 - UCP discovery profile: `/.well-known/ucp`.
 - Catalog search через XCatalog GraphQL, выполняемый in-process.
 - Product detail lookup через XCatalog GraphQL, выполняемый in-process.
+- Cart assembly через XCart GraphQL: create, buyer-scoped list, get, full-state update.
+- Checkout snapshot и hosted handoff без адреса через stateless DataProtection token.
+- Order tracking через Orders module services: lookup по order id/number или cart id после handoff.
 - Structured UCP errors.
 - Buyer context propagation из HTTP headers.
-- Planned/stub endpoints для cart, checkout и order tracking.
+- Planned/stub endpoint для checkout update.
 
 Канонические публичные UCP endpoints публикуются без префикса `/api`. Единственный `/api` route, оставленный намеренно, это internal smoke endpoint.
 
@@ -24,44 +27,43 @@
 | Project | Назначение |
 | --- | --- |
 | `Virtocommerce.UCP.Core` | Protocol models, service contracts, module constants, options, errors. |
-| `Virtocommerce.UCP.Data` | Module DbContext scaffold. |
-| `Virtocommerce.UCP.Data.SqlServer` | SQL Server migrations/provider marker. |
-| `Virtocommerce.UCP.Data.MySql` | MySQL migrations/provider marker. |
-| `Virtocommerce.UCP.Data.PostgreSql` | PostgreSQL migrations/provider marker. |
+| `Virtocommerce.UCP.Data` | Module data project scaffold; domain storage model пока не используется. |
+| `Virtocommerce.UCP.Data.SqlServer` | SQL Server provider marker. |
+| `Virtocommerce.UCP.Data.MySql` | MySQL provider marker. |
+| `Virtocommerce.UCP.Data.PostgreSql` | PostgreSQL provider marker. |
 | `Virtocommerce.UCP.ExperienceApi` | XAPI schema marker для модуля. |
 | `Virtocommerce.UCP.Web` | Module entry point, controllers, services, DI registrations. |
-| `Virtocommerce.UCP.Tests` | Unit tests для profile и catalog behavior. |
+| `Virtocommerce.UCP.Tests` | Unit tests для profile, catalog и cart behavior. |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Agent["AI agent / MCP client"]
+    Client["UCP / MCP client"]
     UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*"]
-    Controllers["ASP.NET Core controllers<br/>UcpProfileController<br/>UcpCatalogController<br/>planned cart/checkout/order"]
-    Services["UCP services<br/>UcpProfileService<br/>UcpCatalogService"]
+    Controllers["ASP.NET Core controllers<br/>UcpProfileController<br/>UcpCatalogController<br/>UcpCartController<br/>UcpCheckoutController<br/>UcpOrderController"]
+    Services["UCP services<br/>UcpProfileService<br/>UcpCatalogService<br/>UcpCartService<br/>UcpCheckoutService<br/>UcpOrderService"]
     Executor["IXApiInProcessExecutor<br/>GraphQL executer"]
     XApi["Virto Commerce XAPI<br/>scoped schema: ucp"]
     Modules["Commerce modules<br/>XCatalog, XCart, Orders,<br/>Marketing, Store, Pricing, Inventory"]
-    Db["UCPDbContext<br/>provider-specific migrations"]
 
-    Agent --> UcpHttp
+    Client --> UcpHttp
     UcpHttp --> Controllers
     Controllers --> Services
     Services --> Executor
     Executor --> XApi
     XApi --> Modules
-    Services -. module settings/options .-> Db
 ```
 
 ### Request Flow
 
-1. Agent вызывает канонический UCP endpoint.
+1. Клиент вызывает канонический UCP endpoint.
 2. Controller принимает HTTP request и делегирует работу UCP service.
 3. Service нормализует UCP request context: store, currency, culture, pagination и buyer headers.
 4. Catalog operations преобразуются в XCatalog GraphQL queries.
-5. `IXApiInProcessExecutor` выполняет GraphQL внутри текущего platform process, без отдельного HTTP call.
-6. Service мапит XCatalog data обратно в UCP response models.
+5. Cart operations преобразуются в XCart GraphQL queries/mutations.
+6. `IXApiInProcessExecutor` выполняет GraphQL внутри текущего platform process, без отдельного HTTP call.
+7. Service мапит XCatalog, XCart и Orders data обратно в UCP response models.
 
 Buyer delegation сейчас header-based:
 
@@ -77,7 +79,7 @@ Module manifest объявляет runtime dependencies:
 | Module | Version |
 | --- | --- |
 | `VirtoCommerce.Xapi` | `3.1001.0` |
-| `VirtoCommerce.XCatalog` | `3.945.0` |
+| `VirtoCommerce.XCatalog` | `3.1000.0` |
 | `VirtoCommerce.XCart` | `3.1016.0` |
 | `VirtoCommerce.Orders` | `3.1000.0` |
 | `VirtoCommerce.Marketing` | `3.1000.0` |
@@ -94,15 +96,16 @@ Configuration читается из секции `UCP`:
     "DefaultStoreId": "store-acme",
     "DefaultCurrency": "USD",
     "DefaultCultureName": "en-US",
-    "StorefrontOrigin": "https://localhost:5001",
     "UcpBaseUrl": "https://localhost:5001/ucp/v1",
-    "HandoffUrlTemplate": "https://localhost:5001/checkout?ucp_session={token}",
+    "HandoffTokenTtlMinutes": 15,
     "AnonymousCatalog": true
   }
 }
 ```
 
 Если `DefaultStoreId` не настроен, catalog requests должны передавать `context.store_id`.
+Checkout handoff URL строится из Virto Commerce Store URL (`Store.Url` / `Store.SecureUrl`) для `store_id`.
+`UCP:StorefrontOrigin` остаётся fallback для окружений без Store URL, а `UCP:HandoffUrlTemplate` можно использовать как explicit override.
 
 Модуль также регистрирует platform setting `UCP.Enabled`.
 
@@ -169,17 +172,114 @@ Product response включает:
 
 Если product не найден, endpoint возвращает structured error `product_not_found`.
 
+### Cart Assembly
+
+```http
+POST /ucp/v1/carts
+GET /ucp/v1/carts?store_id=store-acme&currency=USD&culture_name=en-US&buyer_id=user-42
+GET /ucp/v1/carts/{cartId}?store_id=store-acme&currency=USD&culture_name=en-US
+PUT /ucp/v1/carts/{cartId}
+```
+
+`create_cart` создаёт корзину через XCart `addItem`, затем применяет купоны через `addCoupon`.
+
+`list_carts` - Virto extension поверх XCart `carts` query. Он требует buyer context через `X-Buyer-User-Id` или `context.buyer_id`/`buyer_id` query parameter и не возвращает общий anonymous список корзин.
+
+Пример create request:
+
+```json
+{
+  "context": {
+    "store_id": "store-acme",
+    "currency": "USD",
+    "language": "en-US",
+    "buyer_id": "user-42",
+    "organization_id": "org-100"
+  },
+  "line_items": [
+    {
+      "product_id": "product-id",
+      "quantity": 1
+    }
+  ],
+  "coupons": ["SAVE10"]
+}
+```
+
+`update_cart` следует UCP replacement semantics: request передаёт желаемое итоговое состояние корзины, а adapter вычисляет diff и вызывает XCart mutations:
+
+- `addItem`
+- `changeCartItemQuantity`
+- `removeCartItem`
+- `addCoupon`
+- `removeCoupon`
+
+Чтобы удалить позицию, нужно исключить её из `line_items` или передать существующий `line_items[].id` с `quantity: 0`.
+
+Cart response включает:
+
+- `id`
+- `status`
+- `store_id`
+- `currency`
+- `buyer_id`
+- `organization_id`
+- `line_items`
+- `totals`
+- `coupons`
+- `continue_url`
+- `messages`
+
+Денежные значения возвращаются в minor units.
+
+### Checkout Handoff
+
+```http
+POST /ucp/v1/checkouts
+GET /ucp/v1/checkouts/{checkoutId}/payment-handlers
+POST /ucp/v1/checkouts/{checkoutId}/handoff
+POST /ucp/v1/internal/handoff/restore
+```
+
+Текущий checkout flow hosted-only:
+
+- `create_checkout` создаёт checkout snapshot из cart.
+- `handoff_checkout` возвращает `continue_url` с защищённым `ucp_session`.
+- `continue_url` использует storefront origin из Store URL, например `https://localhost:3000/checkout?ucp_session=...`.
+- `storefront_restore` валидирует `ucp_session` и возвращает cart/checkout context для storefront.
+- Shipping address, billing address, shipping method и payment details завершаются в storefront checkout.
+
+Request model уже содержит optional hints для следующего шага:
+
+- `buyer`
+- `shipping_address`
+- `billing_address`
+- `shipping_method_id`
+- `payment_handler`
+- `notes`
+
+Сейчас эти поля сохраняются в handoff token, но не применяются к XCart. Это оставляет совместимый путь для следующего slice с address prefill и shipping method selection.
+
+### Order Tracking
+
+```http
+GET /ucp/v1/orders/{orderId}?buyer_id=user-42&culture_name=en-US
+GET /ucp/v1/orders?cart_id={cartId}&buyer_id=user-42&culture_name=en-US
+```
+
+`track_order` возвращает order status, order number, totals, line items, shipment snapshot, payment snapshot и shipment tracking поля, если они уже есть в order data.
+
+После hosted handoff клиент обычно ещё не знает `order_id`, поэтому основной путь - lookup по исходному `cart_id`. Lookup выполняется по `CustomerOrder.ShoppingCartId` через Orders module services. Если buyer context изменился во время guest checkout, endpoint повторяет поиск без buyer filter и всё равно матчится строго по `cart_id`.
+
+Если заказ ещё не создан storefront checkout flow или не найден среди recent orders, endpoint возвращает structured error `order_not_found`.
+
 ### Planned Endpoints
 
 Эти routes существуют как structured `501 Not Implemented` stubs:
 
 | Method | Path | Capability |
 | --- | --- | --- |
-| `POST` | `/ucp/v1/carts` | cart |
-| `POST` | `/ucp/v1/checkouts` | checkout |
-| `GET` | `/ucp/v1/checkouts/{checkoutId}/payment-handlers` | checkout |
-| `POST` | `/ucp/v1/checkouts/{checkoutId}/handoff` | checkout |
-| `GET` | `/ucp/v1/orders/{orderId}` | order |
+| `PATCH` | `/ucp/v1/checkouts/{checkoutId}` | checkout |
 
 ### Internal Smoke Endpoint
 
@@ -196,6 +296,8 @@ GET /api/ucp/internal/catalog-smoke
 - `invalid_request`
 - `missing_store_id`
 - `product_not_found`
+- `cart_not_found`
+- `order_not_found`
 - `xapi_execution_failed`
 - `not_implemented`
 
@@ -228,16 +330,20 @@ Virtocommerce.UCP
 2. `GET /.well-known/ucp` возвращает UCP profile.
 3. `POST /ucp/v1/catalog/search` возвращает catalog results для настроенного store.
 4. `GET /ucp/v1/catalog/products/{id}` возвращает product details или structured `product_not_found`.
+5. `POST /ucp/v1/carts` создаёт XCart-backed корзину.
+6. `GET /ucp/v1/carts` возвращает buyer-scoped список корзин.
+7. `PUT /ucp/v1/carts/{cartId}` обновляет итоговое состояние корзины.
+8. `POST /ucp/v1/checkouts` создаёт checkout snapshot.
+9. `POST /ucp/v1/checkouts/{checkoutId}/handoff` возвращает hosted checkout `continue_url`.
+10. После оформления на storefront `GET /ucp/v1/orders?cart_id={cartId}&buyer_id={buyerId}` возвращает order tracking snapshot.
 
 ## Roadmap
 
 Ближайшие области реализации:
 
-- Cart assembly через XCart.
-- Checkout creation and update.
-- Hosted checkout handoff.
-- Order tracking.
-- Faceted/catalog filter schema для более богатого agent-side product discovery.
+- Checkout address prefill and update.
+- Full carrier-level shipment tracking events, если появится carrier integration.
+- Faceted/catalog filter schema для более богатого product discovery.
 - OAuth2/OIDC buyer delegation вместо header-only context.
 
 ## License

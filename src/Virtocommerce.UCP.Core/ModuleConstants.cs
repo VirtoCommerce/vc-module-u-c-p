@@ -40,6 +40,8 @@ public static class ModuleConstants
         public const string NotImplemented = "not_implemented";
         public const string MissingStoreId = "missing_store_id";
         public const string ProductNotFound = "product_not_found";
+        public const string CartNotFound = "cart_not_found";
+        public const string OrderNotFound = "order_not_found";
         public const string XApiExecutionFailed = "xapi_execution_failed";
         public const string InvalidRequest = "invalid_request";
     }
@@ -50,12 +52,15 @@ public static class ModuleConstants
         public const string CatalogSearch = "/ucp/v1/catalog/search";
         public const string CatalogProduct = "/ucp/v1/catalog/products/{id}";
         public const string CartCreate = "/ucp/v1/carts";
+        public const string CartList = "/ucp/v1/carts";
+        public const string CartGet = "/ucp/v1/carts/{cartId}";
         public const string CartUpdate = "/ucp/v1/carts/{cartId}";
         public const string CheckoutCreate = "/ucp/v1/checkouts";
         public const string CheckoutUpdate = "/ucp/v1/checkouts/{checkoutId}";
         public const string CheckoutPaymentHandlers = "/ucp/v1/checkouts/{checkoutId}/payment-handlers";
         public const string CheckoutHandoff = "/ucp/v1/checkouts/{checkoutId}/handoff";
         public const string OrderTrack = "/ucp/v1/orders/{orderId}";
+        public const string OrderTrackByCart = "/ucp/v1/orders?cart_id={cartId}";
         public const string StorefrontRestore = "/ucp/v1/internal/handoff/restore";
     }
 
@@ -66,6 +71,8 @@ public static class ModuleConstants
         public const string SearchProducts = "search_products";
         public const string GetProduct = "get_product";
         public const string CreateCart = "create_cart";
+        public const string ListCarts = "list_carts";
+        public const string GetCart = "get_cart";
         public const string UpdateCart = "update_cart";
         public const string CreateCheckout = "create_checkout";
         public const string UpdateCheckout = "update_checkout";

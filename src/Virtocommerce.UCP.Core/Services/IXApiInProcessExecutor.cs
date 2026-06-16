@@ -7,4 +7,6 @@ namespace Virtocommerce.UCP.Core.Services;
 public interface IXApiInProcessExecutor
 {
     Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default);
+    Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default);
+    Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default);
 }
