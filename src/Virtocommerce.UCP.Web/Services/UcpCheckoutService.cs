@@ -9,16 +9,17 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
-using VirtoCommerce.Platform.Core.Common;
-using VirtoCommerce.StoreModule.Core.Services;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Services.Handoff;
+using VirtoCommerce.Platform.Core.Common;
+using VirtoCommerce.StoreModule.Core.Services;
 
 namespace Virtocommerce.UCP.Web.Services;
 
-public class UcpCheckoutService : IUcpCheckoutService
+public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
 {
     private const string StatusIncomplete = "incomplete";
     private const string StatusRequiresEscalation = "requires_escalation";
@@ -33,7 +34,6 @@ public class UcpCheckoutService : IUcpCheckoutService
 
     private readonly IUcpCartService _cartService;
     private readonly IDataProtector _dataProtector;
-    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IStoreService _storeService;
     private readonly UcpOptions _options;
 
@@ -43,10 +43,10 @@ public class UcpCheckoutService : IUcpCheckoutService
         IHttpContextAccessor httpContextAccessor,
         IOptions<UcpOptions> options,
         IStoreService storeService = null)
+        : base(httpContextAccessor)
     {
         _cartService = cartService;
         _dataProtector = dataProtectionProvider.CreateProtector("Virtocommerce.UCP.CheckoutHandoff.v1");
-        _httpContextAccessor = httpContextAccessor;
         _options = options.Value;
         _storeService = storeService;
     }
@@ -54,16 +54,46 @@ public class UcpCheckoutService : IUcpCheckoutService
     public virtual async Task<UcpCheckoutResponse> CreateCheckoutAsync(UcpCheckoutRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCheckoutRequest();
-        var cart = await GetCartForCheckoutAsync(request.CartId, request.Context, cancellationToken);
+        NormalizeCheckoutContext(request);
+        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
         var checkout = CreateCheckout(request, cart, StatusIncomplete);
 
         checkout.Messages.Add(new UcpMessage
         {
             Type = "info",
             Code = "handoff_required",
-            Content = "Checkout is ready for hosted handoff. Shipping address and payment details will be completed in storefront checkout.",
+            Content = "Checkout is ready for hosted handoff. Provided shipping and billing addresses are already applied to the cart.",
             Severity = "info",
         });
+        AddAddressStateMessages(checkout, request);
+
+        return new UcpCheckoutResponse
+        {
+            Ucp = CreateMetadata("success", CheckoutCapability),
+            Checkout = checkout,
+            Messages = checkout.Messages,
+        };
+    }
+
+    public virtual async Task<UcpCheckoutResponse> UpdateCheckoutAsync(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(checkoutId);
+
+        request ??= new UcpCheckoutRequest();
+        request.CartId = FirstNotEmpty(request.CartId, checkoutId);
+        NormalizeCheckoutContext(request);
+
+        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
+        var checkout = CreateCheckout(request, cart, StatusIncomplete);
+
+        checkout.Messages.Add(new UcpMessage
+        {
+            Type = "info",
+            Code = "checkout_updated",
+            Content = "Checkout data was updated. Create a new handoff URL to use the latest cart snapshot.",
+            Severity = "info",
+        });
+        AddAddressStateMessages(checkout, request);
 
         return new UcpCheckoutResponse
         {
@@ -81,7 +111,7 @@ public class UcpCheckoutService : IUcpCheckoutService
         {
             Ucp = CreateMetadata("success", CheckoutCapability),
             CheckoutId = checkoutId,
-            PaymentHandlers = CreatePaymentHandlers(),
+            PaymentHandlers = UcpPaymentHandlerProfiles.Create(),
         });
     }
 
@@ -91,8 +121,9 @@ public class UcpCheckoutService : IUcpCheckoutService
 
         request ??= new UcpCheckoutRequest();
         request.CartId = FirstNotEmpty(request.CartId, checkoutId);
+        NormalizeCheckoutContext(request);
 
-        var cart = await GetCartForCheckoutAsync(request.CartId, request.Context, cancellationToken);
+        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _options.HandoffTokenTtlMinutes));
         var checkout = CreateCheckout(request, cart, StatusRequiresEscalation);
         checkout.ExpiresAt = expiresAt;
@@ -101,9 +132,10 @@ public class UcpCheckoutService : IUcpCheckoutService
         {
             Type = "info",
             Code = "shipping_required",
-            Content = "Shipping address, delivery method, and payment details will be completed in hosted checkout.",
+            Content = "Hosted checkout is ready. Provided shipping and billing addresses are already applied to the cart.",
             Severity = "info",
         });
+        AddAddressStateMessages(checkout, request);
 
         return new UcpCheckoutHandoffResponse
         {
@@ -120,10 +152,10 @@ public class UcpCheckoutService : IUcpCheckoutService
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "ucp_session is required.");
         }
 
-        HandoffTokenPayload payload;
+        CheckoutHandoffTokenPayload payload;
         try
         {
-            payload = JsonSerializer.Deserialize<HandoffTokenPayload>(_dataProtector.Unprotect(request.UcpSession), JsonOptions);
+            payload = JsonSerializer.Deserialize<CheckoutHandoffTokenPayload>(_dataProtector.Unprotect(request.UcpSession), JsonOptions);
         }
         catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException or CryptographicException)
         {
@@ -151,7 +183,7 @@ public class UcpCheckoutService : IUcpCheckoutService
             CartId = payload.CartId,
             Status = StatusRequiresEscalation,
             Cart = cart,
-            PaymentHandlers = CreatePaymentHandlers(),
+            PaymentHandlers = UcpPaymentHandlerProfiles.Create(),
             Buyer = payload.Buyer,
             ShippingAddress = payload.ShippingAddress,
             BillingAddress = payload.BillingAddress,
@@ -183,6 +215,35 @@ public class UcpCheckoutService : IUcpCheckoutService
         return response.Cart;
     }
 
+    protected virtual async Task<UcpCart> PrepareCartForCheckoutAsync(UcpCheckoutRequest request, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.CartId))
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "cart_id is required.");
+        }
+
+        var response = request.ShippingAddress != null || request.BillingAddress != null
+            ? await _cartService.ApplyCheckoutDataAsync(request.CartId, request, cancellationToken)
+            : await _cartService.GetCartAsync(request.CartId, new UcpCartRequest { Context = request.Context }, cancellationToken);
+
+        if (response.Cart.LineItems.Count == 0)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "Checkout requires a non-empty cart.");
+        }
+
+        return response.Cart;
+    }
+
+    protected virtual void NormalizeCheckoutContext(UcpCheckoutRequest request)
+    {
+        request.Context ??= new UcpCartContext();
+        request.Context.StoreId = FirstNotEmpty(request.StoreId, request.Context.StoreId);
+        request.Context.Currency = FirstNotEmpty(request.Currency, request.Context.Currency);
+        request.Context.Language = FirstNotEmpty(request.Language, request.Context.Language);
+        request.Context.BuyerId = FirstNotEmpty(request.BuyerId, request.Context.BuyerId);
+        request.Context.OrganizationId = FirstNotEmpty(request.OrganizationId, request.Context.OrganizationId);
+    }
+
     protected virtual UcpCheckout CreateCheckout(UcpCheckoutRequest request, UcpCart cart, string status)
     {
         return new UcpCheckout
@@ -191,18 +252,119 @@ public class UcpCheckoutService : IUcpCheckoutService
             CartId = cart.Id,
             Status = status,
             Cart = cart,
-            PaymentHandlers = CreatePaymentHandlers(),
+            PaymentHandlers = UcpPaymentHandlerProfiles.Create(),
             Buyer = MergeBuyer(request.Buyer, cart),
-            ShippingAddress = request.ShippingAddress,
-            BillingAddress = request.BillingAddress,
+            ShippingAddress = MergeAddress(request.ShippingAddress, cart, "shipping"),
+            BillingAddress = MergeAddress(request.BillingAddress, cart, "billing") ?? MergeAddress(request.ShippingAddress, cart, "shipping"),
             ShippingMethodId = request.ShippingMethodId,
             PaymentHandler = FirstNotEmpty(request.PaymentHandler, ModuleConstants.PaymentHandlers.HostedCheckout),
         };
     }
 
+    protected virtual void AddAddressStateMessages(UcpCheckout checkout, UcpCheckoutRequest request)
+    {
+        if (checkout.ShippingAddress == null)
+        {
+            if (!string.IsNullOrWhiteSpace(request?.Notes))
+            {
+                checkout.Messages.Add(new UcpMessage
+                {
+                    Type = "warning",
+                    Code = "shipping_address_not_notes",
+                    Content = "Order notes are not used as the shipping address.",
+                    Severity = "warning",
+                });
+            }
+
+            checkout.Messages.Add(new UcpMessage
+            {
+                Type = "warning",
+                Code = "shipping_address_missing",
+                Content = "Shipping address is not set.",
+                Severity = "warning",
+            });
+        }
+        else
+        {
+            checkout.Messages.Add(new UcpMessage
+            {
+                Type = "info",
+                Code = "shipping_address_prefilled",
+                Content = "Shipping address is applied to the cart snapshot.",
+                Severity = "info",
+            });
+
+            if (string.IsNullOrWhiteSpace(checkout.ShippingAddress.PostalCode))
+            {
+                checkout.Messages.Add(new UcpMessage
+                {
+                    Type = "warning",
+                    Code = "shipping_postal_code_missing",
+                    Content = "Shipping address postal_code is missing.",
+                    Severity = "warning",
+                });
+            }
+        }
+    }
+
+    protected virtual UcpCheckoutAddress MergeAddress(UcpCheckoutAddress requestedAddress, UcpCart cart, string addressType)
+    {
+        return ToCheckoutAddress(GetCartCheckoutAddress(cart, addressType))
+            ?? requestedAddress;
+    }
+
+    protected virtual UcpCartAddress GetCartCheckoutAddress(UcpCart cart, string addressType)
+    {
+        if (cart == null)
+        {
+            return null;
+        }
+
+        if (string.Equals(addressType, "shipping", StringComparison.OrdinalIgnoreCase))
+        {
+            return cart.Shipments.LastOrDefault(x => x.DeliveryAddress != null)?.DeliveryAddress
+                ?? cart.Addresses.LastOrDefault(x => string.Equals(x.AddressType, addressType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (string.Equals(addressType, "billing", StringComparison.OrdinalIgnoreCase))
+        {
+            return cart.Payments.LastOrDefault(x => x.BillingAddress != null)?.BillingAddress
+                ?? cart.Addresses.LastOrDefault(x => string.Equals(x.AddressType, addressType, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return cart.Addresses.LastOrDefault(x => string.Equals(x.AddressType, addressType, StringComparison.OrdinalIgnoreCase));
+    }
+
+    protected virtual UcpCheckoutAddress ToCheckoutAddress(UcpCartAddress address)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+
+        return new UcpCheckoutAddress
+        {
+            Id = address.Id,
+            Name = address.Name,
+            Organization = address.Organization,
+            FirstName = address.FirstName,
+            LastName = address.LastName,
+            Line1 = address.Line1,
+            Line2 = address.Line2,
+            City = address.City,
+            Region = address.Region,
+            RegionId = address.RegionId,
+            PostalCode = address.PostalCode,
+            CountryCode = address.CountryCode,
+            CountryName = address.CountryName,
+            Phone = address.Phone,
+            Email = address.Email,
+        };
+    }
+
     protected virtual string CreateHandoffToken(UcpCheckout checkout, UcpCartContext context, DateTimeOffset expiresAt)
     {
-        var payload = new HandoffTokenPayload
+        var payload = new CheckoutHandoffTokenPayload
         {
             CheckoutId = checkout.Id,
             CartId = checkout.CartId,
@@ -252,90 +414,4 @@ public class UcpCheckoutService : IUcpCheckoutService
         return buyer;
     }
 
-    protected virtual IList<UcpPaymentHandlerProfile> CreatePaymentHandlers()
-    {
-        return
-        [
-            new UcpPaymentHandlerProfile
-            {
-                Code = ModuleConstants.PaymentHandlers.HostedCheckout,
-                Available = true,
-                Capability = ModuleConstants.Capabilities.Checkout,
-            },
-            new UcpPaymentHandlerProfile
-            {
-                Code = ModuleConstants.PaymentHandlers.NativeCard,
-                Available = false,
-                Reason = "not_available",
-                Capability = ModuleConstants.Capabilities.Checkout,
-            },
-            new UcpPaymentHandlerProfile
-            {
-                Code = ModuleConstants.PaymentHandlers.GooglePay,
-                Available = false,
-                Reason = "not_available",
-                Capability = ModuleConstants.Capabilities.Checkout,
-            },
-        ];
-    }
-
-    protected virtual UcpResponseMetadata CreateMetadata(string status, string capability)
-    {
-        return new UcpResponseMetadata
-        {
-            Version = ModuleConstants.UcpVersion,
-            Status = status,
-            CorrelationId = GetCorrelationId(),
-            Capabilities =
-            {
-                [capability] =
-                [
-                    new UcpCapabilityVersion { Version = ModuleConstants.UcpVersion },
-                ],
-            },
-        };
-    }
-
-    protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
-    {
-        return new UcpException(code, message, statusCode)
-        {
-            Error = new UcpError
-            {
-                Code = code,
-                Message = message,
-                CorrelationId = GetCorrelationId(),
-            },
-        };
-    }
-
-    protected virtual string GetCorrelationId()
-    {
-        var headers = _httpContextAccessor.HttpContext?.Request.Headers;
-        return headers != null && headers.TryGetValue(ModuleConstants.Headers.CorrelationId, out var values)
-            ? values.FirstOrDefault()
-            : _httpContextAccessor.HttpContext?.TraceIdentifier;
-    }
-
-    protected static string FirstNotEmpty(params string[] values)
-    {
-        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-    }
-
-    protected class HandoffTokenPayload
-    {
-        public string CheckoutId { get; set; }
-        public string CartId { get; set; }
-        public string StoreId { get; set; }
-        public string Currency { get; set; }
-        public string CultureName { get; set; }
-        public string BuyerId { get; set; }
-        public string OrganizationId { get; set; }
-        public UcpCheckoutBuyer Buyer { get; set; }
-        public UcpCheckoutAddress ShippingAddress { get; set; }
-        public UcpCheckoutAddress BillingAddress { get; set; }
-        public string ShippingMethodId { get; set; }
-        public string PaymentHandler { get; set; }
-        public DateTimeOffset ExpiresAt { get; set; }
-    }
 }

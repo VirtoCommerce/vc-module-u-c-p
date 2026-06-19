@@ -5,24 +5,24 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
-using VirtoCommerce.OrdersModule.Core.Model;
-using VirtoCommerce.OrdersModule.Core.Model.Search;
-using VirtoCommerce.OrdersModule.Core.Services;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Services.Execution;
+using VirtoCommerce.OrdersModule.Core.Model;
+using VirtoCommerce.OrdersModule.Core.Model.Search;
+using VirtoCommerce.OrdersModule.Core.Services;
 
 namespace Virtocommerce.UCP.Web.Services;
 
-public class UcpOrderService : IUcpOrderService
+public class UcpOrderService : UcpServiceBase, IUcpOrderService
 {
     private const int RecentOrderLookupLimit = 50;
     private static readonly string OrderResponseGroup = CustomerOrderResponseGroup.Full.ToString();
 
     private readonly ICustomerOrderService _customerOrderService;
     private readonly ICustomerOrderSearchService _customerOrderSearchService;
-    private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly UcpOptions _options;
 
     public UcpOrderService(
@@ -30,17 +30,17 @@ public class UcpOrderService : IUcpOrderService
         ICustomerOrderSearchService customerOrderSearchService,
         IHttpContextAccessor httpContextAccessor,
         IOptions<UcpOptions> options)
+        : base(httpContextAccessor)
     {
         _customerOrderService = customerOrderService;
         _customerOrderSearchService = customerOrderSearchService;
-        _httpContextAccessor = httpContextAccessor;
         _options = options.Value;
     }
 
     public virtual async Task<UcpOrderResponse> TrackOrderAsync(UcpOrderTrackingRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpOrderTrackingRequest();
-        var orderRequest = NormalizeRequest(request);
+        var orderRequest = BuildOrderExecutionRequest(request);
 
         CustomerOrder orderModel;
         if (!string.IsNullOrWhiteSpace(orderRequest.CartId))
@@ -49,7 +49,7 @@ public class UcpOrderService : IUcpOrderService
         }
         else
         {
-            orderModel = await GetOrderByIdOrNumberAsync(orderRequest);
+            orderModel = await FindOrderByIdOrNumberAsync(orderRequest);
         }
 
         if (orderModel == null)
@@ -58,7 +58,7 @@ public class UcpOrderService : IUcpOrderService
             throw CreateException(ModuleConstants.ErrorCodes.OrderNotFound, $"Order '{lookup}' was not found.", StatusCodes.Status404NotFound);
         }
 
-        var order = ReadOrder(orderModel);
+        var order = MapOrder(orderModel);
         return new UcpOrderResponse
         {
             Ucp = CreateMetadata("success", "dev.ucp.shopping.order.track"),
@@ -67,7 +67,7 @@ public class UcpOrderService : IUcpOrderService
         };
     }
 
-    protected virtual OrderExecutionRequest NormalizeRequest(UcpOrderTrackingRequest request)
+    private OrderExecutionRequest BuildOrderExecutionRequest(UcpOrderTrackingRequest request)
     {
         var orderId = FirstNotEmpty(request.OrderId, request.OrderNumber);
         if (string.IsNullOrWhiteSpace(orderId) && string.IsNullOrWhiteSpace(request.CartId))
@@ -86,7 +86,7 @@ public class UcpOrderService : IUcpOrderService
         };
     }
 
-    protected virtual async Task<CustomerOrder> GetOrderByIdOrNumberAsync(OrderExecutionRequest request)
+    private async Task<CustomerOrder> FindOrderByIdOrNumberAsync(OrderExecutionRequest request)
     {
         if (!string.IsNullOrWhiteSpace(request.OrderId))
         {
@@ -114,7 +114,7 @@ public class UcpOrderService : IUcpOrderService
         return result.Results.FirstOrDefault();
     }
 
-    protected virtual async Task<CustomerOrder> FindOrderByCartIdAsync(OrderExecutionRequest request)
+    private async Task<CustomerOrder> FindOrderByCartIdAsync(OrderExecutionRequest request)
     {
         var criteria = new CustomerOrderSearchCriteria
         {
@@ -137,13 +137,13 @@ public class UcpOrderService : IUcpOrderService
         return await FindOrderByCartIdAsync(criteria, request.CartId);
     }
 
-    protected virtual async Task<CustomerOrder> FindOrderByCartIdAsync(CustomerOrderSearchCriteria criteria, string cartId)
+    private async Task<CustomerOrder> FindOrderByCartIdAsync(CustomerOrderSearchCriteria criteria, string cartId)
     {
         var result = await _customerOrderSearchService.SearchAsync(criteria, clone: false);
         return result.Results.FirstOrDefault(order => string.Equals(order.ShoppingCartId, cartId, StringComparison.OrdinalIgnoreCase));
     }
 
-    protected virtual UcpOrder ReadOrder(CustomerOrder orderModel)
+    protected virtual UcpOrder MapOrder(CustomerOrder orderModel)
     {
         var currency = orderModel.Currency;
         var order = new UcpOrder
@@ -167,16 +167,16 @@ public class UcpOrderService : IUcpOrderService
                 ShippingSubtotal = CreateMoney(orderModel.ShippingSubTotal, currency),
                 ShippingTotal = CreateMoney(orderModel.ShippingTotal, currency),
             },
-            LineItems = ReadLineItems(orderModel.Items, currency),
-            Shipments = ReadShipments(orderModel.Shipments, currency),
-            Payments = ReadPayments(orderModel.InPayments, currency),
+            LineItems = MapLineItems(orderModel.Items, currency),
+            Shipments = MapShipments(orderModel.Shipments, currency),
+            Payments = MapPayments(orderModel.InPayments, currency),
         };
 
-        order.Messages = ReadMessages(order);
+        order.Messages = CreateOrderMessages(order);
         return order;
     }
 
-    protected virtual IList<UcpOrderLineItem> ReadLineItems(IEnumerable<LineItem> items, string currency)
+    protected virtual IList<UcpOrderLineItem> MapLineItems(IEnumerable<LineItem> items, string currency)
     {
         return (items ?? [])
             .Select(item => new UcpOrderLineItem
@@ -185,6 +185,7 @@ public class UcpOrderService : IUcpOrderService
                 ProductId = item.ProductId,
                 Sku = item.Sku,
                 Name = item.Name,
+                Status = item.Status,
                 ImageUrl = item.ImageUrl,
                 Quantity = item.Quantity,
                 UnitPrice = CreateMoney(item.Price, FirstNotEmpty(item.Currency, currency)),
@@ -196,23 +197,28 @@ public class UcpOrderService : IUcpOrderService
             .ToList();
     }
 
-    protected virtual IList<UcpOrderShipment> ReadShipments(IEnumerable<Shipment> shipments, string currency)
+    protected virtual IList<UcpOrderShipment> MapShipments(IEnumerable<Shipment> shipments, string currency)
     {
         return (shipments ?? [])
             .Select(shipment => new UcpOrderShipment
             {
+                Id = shipment.Id,
+                Number = shipment.Number,
+                Status = shipment.Status,
+                Approved = shipment.IsApproved,
                 ShipmentMethodCode = shipment.ShipmentMethodCode,
                 ShipmentMethodOption = shipment.ShipmentMethodOption,
                 TrackingNumber = shipment.TrackingNumber,
                 TrackingUrl = shipment.TrackingUrl,
+                DeliveryAt = shipment.DeliveryDate?.ToString("O"),
                 Price = CreateMoney(shipment.Price, FirstNotEmpty(shipment.Currency, currency)),
                 DiscountAmount = CreateMoney(shipment.DiscountAmount, FirstNotEmpty(shipment.Currency, currency)),
-                DeliveryAddress = ReadAddress(shipment.DeliveryAddress),
+                DeliveryAddress = MapAddress(shipment.DeliveryAddress),
             })
             .ToList();
     }
 
-    protected virtual IList<UcpOrderPayment> ReadPayments(IEnumerable<PaymentIn> payments, string currency)
+    protected virtual IList<UcpOrderPayment> MapPayments(IEnumerable<PaymentIn> payments, string currency)
     {
         return (payments ?? [])
             .Select(payment => new UcpOrderPayment
@@ -220,15 +226,16 @@ public class UcpOrderService : IUcpOrderService
                 Id = payment.Id,
                 Number = payment.Number,
                 GatewayCode = payment.GatewayCode,
+                Status = payment.Status,
                 Approved = payment.IsApproved,
                 MethodCode = payment.PaymentMethod?.Code,
                 MethodName = payment.PaymentMethod?.Name,
-                BillingAddress = ReadAddress(payment.BillingAddress),
+                BillingAddress = MapAddress(payment.BillingAddress),
             })
             .ToList();
     }
 
-    protected virtual UcpOrderAddress ReadAddress(Address address)
+    protected virtual UcpOrderAddress MapAddress(Address address)
     {
         if (address == null)
         {
@@ -255,7 +262,7 @@ public class UcpOrderService : IUcpOrderService
         };
     }
 
-    protected virtual IList<UcpMessage> ReadMessages(UcpOrder order)
+    protected virtual IList<UcpMessage> CreateOrderMessages(UcpOrder order)
     {
         var messages = new List<UcpMessage>();
 
@@ -282,74 +289,4 @@ public class UcpOrderService : IUcpOrderService
         };
     }
 
-    protected virtual string GetBuyerUserId()
-    {
-        return GetHeader(ModuleConstants.Headers.BuyerUserId);
-    }
-
-    protected virtual string GetBuyerOrganizationId()
-    {
-        return GetHeader(ModuleConstants.Headers.BuyerOrganizationId);
-    }
-
-    protected virtual string GetHeader(string name)
-    {
-        var headers = _httpContextAccessor.HttpContext?.Request.Headers;
-        return headers != null && headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
-    }
-
-    protected virtual string GetCorrelationId()
-    {
-        return FirstNotEmpty(GetHeader(ModuleConstants.Headers.CorrelationId), _httpContextAccessor.HttpContext?.TraceIdentifier);
-    }
-
-    protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
-    {
-        return new UcpException(code, message, statusCode)
-        {
-            Error = new UcpError
-            {
-                Code = code,
-                Message = message,
-                CorrelationId = GetCorrelationId(),
-            },
-        };
-    }
-
-    protected virtual UcpResponseMetadata CreateMetadata(string status, string capability)
-    {
-        return new UcpResponseMetadata
-        {
-            Version = ModuleConstants.UcpVersion,
-            Status = status,
-            CorrelationId = GetCorrelationId(),
-            Capabilities =
-            {
-                [capability] =
-                [
-                    new UcpCapabilityVersion { Version = ModuleConstants.UcpVersion },
-                ],
-            },
-        };
-    }
-
-    protected static long ToMinorUnits(decimal amount)
-    {
-        return Convert.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
-    }
-
-    protected static string FirstNotEmpty(params string[] values)
-    {
-        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-    }
-
-    protected class OrderExecutionRequest
-    {
-        public string OrderId { get; set; }
-        public string OrderNumber { get; set; }
-        public string CartId { get; set; }
-        public string CultureName { get; set; }
-        public string UserId { get; set; }
-        public string OrganizationId { get; set; }
-    }
 }

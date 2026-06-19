@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -6,49 +8,131 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
+using VirtoCommerce.Platform.Core.Common;
+using VirtoCommerce.StoreModule.Core.Model;
+using VirtoCommerce.StoreModule.Core.Model.Search;
+using VirtoCommerce.StoreModule.Core.Services;
 
 namespace Virtocommerce.UCP.Web.Services;
 
 public class UcpProfileService : IUcpProfileService
 {
+    private static readonly string[] SupportedCapabilities =
+    [
+        ModuleConstants.Capabilities.Catalog,
+        ModuleConstants.Capabilities.Cart,
+        ModuleConstants.Capabilities.Checkout,
+        ModuleConstants.Capabilities.Order,
+        ModuleConstants.Capabilities.Geography,
+    ];
+
+    private static readonly string[] AuthScopes =
+    [
+        "ucp.profile.read",
+        "ucp.catalog.read",
+        "ucp.cart.write",
+        "ucp.checkout.write",
+        "ucp.checkout.handoff",
+        "ucp.order.read",
+        "ucp.geography.read",
+    ];
+
+    private static readonly string[] SupportedMcpTools =
+    [
+        ModuleConstants.McpTools.GetStoreCapabilities,
+        ModuleConstants.McpTools.SearchProducts,
+        ModuleConstants.McpTools.GetProduct,
+        ModuleConstants.McpTools.CreateCart,
+        ModuleConstants.McpTools.ListCarts,
+        ModuleConstants.McpTools.GetCart,
+        ModuleConstants.McpTools.UpdateCart,
+        ModuleConstants.McpTools.CreateCheckout,
+        ModuleConstants.McpTools.UpdateCheckout,
+        ModuleConstants.McpTools.GetPaymentHandlers,
+        ModuleConstants.McpTools.HandoffCheckout,
+        ModuleConstants.McpTools.TrackOrder,
+        ModuleConstants.McpTools.ListCountries,
+        ModuleConstants.McpTools.ResolveCountry,
+        ModuleConstants.McpTools.ListRegions,
+    ];
+
+    private static readonly string[] CheckoutGuidance =
+    [
+        "For physical goods, shipping_address is required before hosted handoff when it is not already present on the cart.",
+        "create_checkout and handoff_checkout accept shipping_address; billing_address can mirror shipping_address unless a separate billing address is supplied.",
+        "Delivery and shipping addresses belong in shipping_address, not notes. Notes are order comments only.",
+        "shipping_address and billing_address require recipient first_name and last_name.",
+        "Hosted checkout address editing works best with recipient first_name, last_name, email, and postal_code.",
+        "Country names should be resolved with resolve_country or list_countries before checkout; list_regions resolves province or region ids when the selected country defines regions.",
+        "country_code may be ISO2 in tool input, but UCP normalizes it with Virto Commerce platform ICountriesService before writing XCart. region/region_id are normalized with platform country regions when the selected country has regions; city remains a free-text field.",
+        "Natural-language addresses should be mapped to shipping_address fields such as country_code, country_name, city, line1, line2, region, postal_code, phone, and email.",
+        "default_store_id or store.id from discovery is the default store_id for catalog, cart, and checkout tools. Multiple stores without default_store_id require an explicit store selection.",
+        "Address changes after checkout or handoff require update_checkout followed by a new handoff_checkout URL.",
+        "After hosted checkout, track_order can use the original cart_id before an order_id is available.",
+    ];
+
+    private static readonly (string Name, string Method, string Path, string Capability, string Status, string Description)[] EndpointOperations =
+    [
+        (ModuleConstants.McpTools.GetStoreCapabilities, "GET", ModuleConstants.Endpoints.Discovery, "profile", "available", "Read UCP capabilities, callable MCP tools, endpoint metadata, auth hints, headers, and integration guidance."),
+        (ModuleConstants.McpTools.SearchProducts, "POST", ModuleConstants.Endpoints.CatalogSearch, ModuleConstants.Capabilities.Catalog, "available", "Search buyer-aware catalog products."),
+        (ModuleConstants.McpTools.GetProduct, "GET", ModuleConstants.Endpoints.CatalogProduct, ModuleConstants.Capabilities.Catalog, "available", "Get one buyer-aware product by stable product id."),
+        (ModuleConstants.McpTools.CreateCart, "POST", ModuleConstants.Endpoints.CartCreate, ModuleConstants.Capabilities.Cart, "available", "Create a cart and optionally add the first item."),
+        (ModuleConstants.McpTools.ListCarts, "GET", ModuleConstants.Endpoints.CartList, ModuleConstants.Capabilities.Cart, "available", "List recent buyer-scoped carts."),
+        (ModuleConstants.McpTools.GetCart, "GET", ModuleConstants.Endpoints.CartGet, ModuleConstants.Capabilities.Cart, "available", "Read cart lines, totals, coupons, addresses, shipments, payments, and continue_url."),
+        (ModuleConstants.McpTools.UpdateCart, "PUT", ModuleConstants.Endpoints.CartUpdate, ModuleConstants.Capabilities.Cart, "available", "Update cart items and coupons."),
+        (ModuleConstants.McpTools.CreateCheckout, "POST", ModuleConstants.Endpoints.CheckoutCreate, ModuleConstants.Capabilities.Checkout, "available", "Create checkout snapshot. Delivery addresses belong in structured shipping_address fields; country and region are normalized through platform dictionaries before XCart is updated."),
+        (ModuleConstants.McpTools.UpdateCheckout, "PATCH", ModuleConstants.Endpoints.CheckoutUpdate, ModuleConstants.Capabilities.Checkout, "available", "Update checkout address data before payment. A new handoff URL is required after shipping_address or billing_address changes."),
+        (ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "available", "Read supported payment handlers. hosted_checkout is the current available handler."),
+        (ModuleConstants.McpTools.HandoffCheckout, "POST", ModuleConstants.Endpoints.CheckoutHandoff, ModuleConstants.Capabilities.Checkout, "available", "Create hosted checkout handoff URL. For physical goods, shipping_address is expected before handoff; billing_address defaults to shipping_address when no separate billing address is provided."),
+        (ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrack, ModuleConstants.Capabilities.Order, "available", "Track an order by order id or number when the user provides one."),
+        (ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrackByCart, ModuleConstants.Capabilities.Order, "available", "After hosted checkout, track the created order by the original cart_id."),
+        (ModuleConstants.McpTools.ListCountries, "GET", ModuleConstants.Endpoints.GeographyCountries, ModuleConstants.Capabilities.Geography, "available", "List or search Virto Commerce platform countries before checkout country normalization."),
+        (ModuleConstants.McpTools.ResolveCountry, "GET", ModuleConstants.Endpoints.GeographyCountryResolve, ModuleConstants.Capabilities.Geography, "available", "Resolve a country query such as ISO2, ISO3, or platform country name to the Virto Commerce platform country id."),
+        (ModuleConstants.McpTools.ListRegions, "GET", ModuleConstants.Endpoints.GeographyRegions, ModuleConstants.Capabilities.Geography, "available", "List platform regions/provinces for a resolved country id. City remains free text."),
+        ("storefront_restore", "POST", ModuleConstants.Endpoints.StorefrontRestore, ModuleConstants.Capabilities.Checkout, "available_storefront", "Storefront-only restore endpoint for ucp_session."),
+    ];
+
     private readonly UcpOptions _options;
     private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IStoreService _storeService;
+    private readonly IStoreSearchService _storeSearchService;
 
-    public UcpProfileService(IOptions<UcpOptions> options, IHttpContextAccessor httpContextAccessor)
+    public UcpProfileService(
+        IOptions<UcpOptions> options,
+        IHttpContextAccessor httpContextAccessor,
+        IStoreService storeService = null,
+        IStoreSearchService storeSearchService = null)
     {
         _options = options.Value;
         _httpContextAccessor = httpContextAccessor;
+        _storeService = storeService;
+        _storeSearchService = storeSearchService;
     }
 
-    public virtual Task<UcpProfile> GetProfileAsync(CancellationToken cancellationToken = default)
+    public virtual async Task<UcpProfile> GetProfileAsync(CancellationToken cancellationToken = default)
     {
         var request = _httpContextAccessor.HttpContext?.Request;
-        var origin = GetConfiguredOrRequestOrigin(request);
+        var storeProfiles = await GetStoreProfilesAsync();
+        var storeProfile = storeProfiles.FirstOrDefault(x => x.IsDefault);
+        var origin = GetConfiguredStorefrontOrigin(storeProfile) ?? GetRequestOrigin(request);
 
         var result = new UcpProfile
         {
             UcpVersion = ModuleConstants.UcpVersion,
             Platform = ModuleConstants.Platform,
             StorefrontOrigin = origin,
+            DefaultStoreId = storeProfile?.Id,
+            Store = storeProfile,
             Endpoints = new UcpEndpointProfile
             {
-                UcpBaseUrl = GetConfiguredOrDefault(_options.UcpBaseUrl, request, "/ucp/v1"),
+                UcpBaseUrl = BuildUcpBaseUrl(request),
                 HandoffUrlTemplate = GetHandoffTemplate(origin),
             },
             Auth = new UcpProfileAuth
             {
                 Agent = "agent_api_key",
                 AnonymousCatalog = _options.AnonymousCatalog,
-                BuyerDelegation = "planned_oauth2_oidc",
-                Scopes =
-                {
-                    "ucp.profile.read",
-                    "ucp.catalog.read",
-                    "ucp.cart.write",
-                    "ucp.checkout.write",
-                    "ucp.checkout.handoff",
-                    "ucp.order.read",
-                },
+                BuyerDelegation = "buyer_context_headers",
             },
             Headers = new UcpHeaderProfile
             {
@@ -72,62 +156,46 @@ public class UcpProfileService : IUcpProfileService
                     ModuleConstants.ErrorCodes.CartNotFound,
                     ModuleConstants.ErrorCodes.OrderNotFound,
                     ModuleConstants.ErrorCodes.XApiExecutionFailed,
-                    ModuleConstants.ErrorCodes.NotImplemented,
                 },
             },
         };
 
-        result.Capabilities.Add(ModuleConstants.Capabilities.Catalog);
-        result.Capabilities.Add(ModuleConstants.Capabilities.Cart);
-        result.Capabilities.Add(ModuleConstants.Capabilities.Checkout);
-        result.Capabilities.Add(ModuleConstants.Capabilities.Order);
-
-        AddOperations(result.Endpoints);
-        AddMcpTools(result);
-
-        result.PaymentHandlers.Add(new UcpPaymentHandlerProfile
+        foreach (var candidate in storeProfiles)
         {
-            Code = ModuleConstants.PaymentHandlers.HostedCheckout,
-            Available = true,
-            Capability = ModuleConstants.Capabilities.Checkout,
-        });
-        result.PaymentHandlers.Add(new UcpPaymentHandlerProfile
-        {
-            Code = ModuleConstants.PaymentHandlers.NativeCard,
-            Available = false,
-            Reason = "not_available",
-            Capability = ModuleConstants.Capabilities.Checkout,
-        });
-        result.PaymentHandlers.Add(new UcpPaymentHandlerProfile
-        {
-            Code = ModuleConstants.PaymentHandlers.GooglePay,
-            Available = false,
-            Reason = "not_available",
-            Capability = ModuleConstants.Capabilities.Checkout,
-        });
+            result.Stores.Add(candidate);
+        }
 
-        return Task.FromResult(result);
+        foreach (var scope in AuthScopes)
+        {
+            result.Auth.Scopes.Add(scope);
+        }
+
+        foreach (var capability in SupportedCapabilities)
+        {
+            result.Capabilities.Add(capability);
+        }
+
+        AddEndpointOperations(result.Endpoints);
+        AddSupportedMcpTools(result);
+        AddCheckoutGuidance(result);
+
+        foreach (var paymentHandler in UcpPaymentHandlerProfiles.Create())
+        {
+            result.PaymentHandlers.Add(paymentHandler);
+        }
+
+        return result;
     }
 
-    protected virtual void AddOperations(UcpEndpointProfile endpoints)
+    protected virtual void AddEndpointOperations(UcpEndpointProfile endpoints)
     {
-        AddOperation(endpoints, ModuleConstants.McpTools.GetStoreCapabilities, "GET", ModuleConstants.Endpoints.Discovery, "profile", "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.SearchProducts, "POST", ModuleConstants.Endpoints.CatalogSearch, ModuleConstants.Capabilities.Catalog, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.GetProduct, "GET", ModuleConstants.Endpoints.CatalogProduct, ModuleConstants.Capabilities.Catalog, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.CreateCart, "POST", ModuleConstants.Endpoints.CartCreate, ModuleConstants.Capabilities.Cart, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.ListCarts, "GET", ModuleConstants.Endpoints.CartList, ModuleConstants.Capabilities.Cart, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.GetCart, "GET", ModuleConstants.Endpoints.CartGet, ModuleConstants.Capabilities.Cart, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.UpdateCart, "PUT", ModuleConstants.Endpoints.CartUpdate, ModuleConstants.Capabilities.Cart, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.CreateCheckout, "POST", ModuleConstants.Endpoints.CheckoutCreate, ModuleConstants.Capabilities.Checkout, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.UpdateCheckout, "PATCH", ModuleConstants.Endpoints.CheckoutUpdate, ModuleConstants.Capabilities.Checkout, "planned");
-        AddOperation(endpoints, ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.HandoffCheckout, "POST", ModuleConstants.Endpoints.CheckoutHandoff, ModuleConstants.Capabilities.Checkout, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrack, ModuleConstants.Capabilities.Order, "available");
-        AddOperation(endpoints, ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrackByCart, ModuleConstants.Capabilities.Order, "available");
-        AddOperation(endpoints, "storefront_restore", "POST", ModuleConstants.Endpoints.StorefrontRestore, ModuleConstants.Capabilities.Checkout, "available_storefront");
+        foreach (var operation in EndpointOperations)
+        {
+            AddOperation(endpoints, operation.Name, operation.Method, operation.Path, operation.Capability, operation.Status, operation.Description);
+        }
     }
 
-    protected virtual void AddOperation(UcpEndpointProfile endpoints, string name, string method, string path, string capability, string status)
+    protected virtual void AddOperation(UcpEndpointProfile endpoints, string name, string method, string path, string capability, string status, string description)
     {
         endpoints.Operations.Add(new UcpOperationProfile
         {
@@ -136,48 +204,129 @@ public class UcpProfileService : IUcpProfileService
             Path = path,
             Capability = capability,
             Status = status,
+            Description = description,
         });
     }
 
-    protected virtual void AddMcpTools(UcpProfile profile)
+    protected virtual void AddSupportedMcpTools(UcpProfile profile)
     {
-        profile.McpTools.Add(ModuleConstants.McpTools.GetStoreCapabilities);
-        profile.McpTools.Add(ModuleConstants.McpTools.BeginBuyerAuthorization);
-        profile.McpTools.Add(ModuleConstants.McpTools.SearchProducts);
-        profile.McpTools.Add(ModuleConstants.McpTools.GetProduct);
-        profile.McpTools.Add(ModuleConstants.McpTools.CreateCart);
-        profile.McpTools.Add(ModuleConstants.McpTools.ListCarts);
-        profile.McpTools.Add(ModuleConstants.McpTools.GetCart);
-        profile.McpTools.Add(ModuleConstants.McpTools.UpdateCart);
-        profile.McpTools.Add(ModuleConstants.McpTools.CreateCheckout);
-        profile.McpTools.Add(ModuleConstants.McpTools.UpdateCheckout);
-        profile.McpTools.Add(ModuleConstants.McpTools.GetPaymentHandlers);
-        profile.McpTools.Add(ModuleConstants.McpTools.HandoffCheckout);
-        profile.McpTools.Add(ModuleConstants.McpTools.TrackOrder);
+        foreach (var tool in SupportedMcpTools)
+        {
+            profile.McpTools.Add(tool);
+        }
     }
 
-    protected virtual string GetConfiguredOrRequestOrigin(HttpRequest request)
+    protected virtual void AddCheckoutGuidance(UcpProfile profile)
+    {
+        foreach (var guidance in CheckoutGuidance)
+        {
+            profile.AgentGuidance.Add(guidance);
+        }
+    }
+
+    protected virtual async Task<IList<UcpStoreProfile>> GetStoreProfilesAsync()
+    {
+        var configuredStore = await GetConfiguredDefaultStoreAsync();
+        if (configuredStore != null || !string.IsNullOrWhiteSpace(_options.DefaultStoreId))
+        {
+            var configuredProfile = CreateStoreProfile(
+                configuredStore,
+                isDefault: true,
+                source: configuredStore == null ? "configuration" : "store_service");
+
+            return configuredProfile == null
+                ? new List<UcpStoreProfile>()
+                : new List<UcpStoreProfile> { configuredProfile };
+        }
+
+        var stores = await SearchOpenStoresAsync();
+        return stores
+            .Select(store => CreateStoreProfile(store, isDefault: stores.Count == 1, source: "store_search"))
+            .Where(profile => profile != null)
+            .ToList();
+    }
+
+    protected virtual async Task<Store> GetConfiguredDefaultStoreAsync()
+    {
+        if (_storeService == null || string.IsNullOrWhiteSpace(_options.DefaultStoreId))
+        {
+            return null;
+        }
+
+        return await _storeService.GetNoCloneAsync(_options.DefaultStoreId);
+    }
+
+    protected virtual async Task<IList<Store>> SearchOpenStoresAsync()
+    {
+        if (_storeSearchService == null)
+        {
+            return new List<Store>();
+        }
+
+        var result = await _storeSearchService.SearchAsync(new StoreSearchCriteria
+        {
+            StoreStates = new[] { StoreState.Open },
+            Take = 50,
+        });
+
+        return result?.Results?
+            .Where(store => store != null)
+            .ToList() ?? new List<Store>();
+    }
+
+    protected virtual UcpStoreProfile CreateStoreProfile(Store store, bool isDefault, string source)
+    {
+        if (store == null && string.IsNullOrWhiteSpace(_options.DefaultStoreId))
+        {
+            return null;
+        }
+
+        return new UcpStoreProfile
+        {
+            Id = store?.Id ?? _options.DefaultStoreId,
+            Name = store?.Name,
+            Url = NormalizeUrl(store?.Url),
+            SecureUrl = NormalizeUrl(store?.SecureUrl),
+            DefaultCurrency = store?.DefaultCurrency ?? _options.DefaultCurrency,
+            DefaultLanguage = store?.DefaultLanguage ?? _options.DefaultCultureName,
+            Source = source,
+            IsDefault = isDefault,
+        };
+    }
+
+    protected virtual string GetConfiguredStorefrontOrigin(UcpStoreProfile store)
     {
         if (!string.IsNullOrWhiteSpace(_options.StorefrontOrigin))
         {
             return _options.StorefrontOrigin.TrimEnd('/');
         }
 
+        var storeUrl = FirstNotEmpty(store?.SecureUrl, store?.Url);
+        if (!string.IsNullOrWhiteSpace(storeUrl))
+        {
+            return storeUrl.TrimEnd('/');
+        }
+
+        return null;
+    }
+
+    protected virtual string GetRequestOrigin(HttpRequest request)
+    {
         return request == null
             ? null
             : $"{request.Scheme}://{request.Host}".TrimEnd('/');
     }
 
-    protected virtual string GetConfiguredOrDefault(string configuredValue, HttpRequest request, string path)
+    protected virtual string BuildUcpBaseUrl(HttpRequest request)
     {
-        if (!string.IsNullOrWhiteSpace(configuredValue))
+        if (!string.IsNullOrWhiteSpace(_options.UcpBaseUrl))
         {
-            return configuredValue.TrimEnd('/');
+            return _options.UcpBaseUrl.TrimEnd('/');
         }
 
         return request == null
-            ? path
-            : $"{request.Scheme}://{request.Host}{path}".TrimEnd('/');
+            ? "/ucp/v1"
+            : $"{request.Scheme}://{request.Host}/ucp/v1".TrimEnd('/');
     }
 
     protected virtual string GetHandoffTemplate(string origin)
@@ -190,5 +339,17 @@ public class UcpProfileService : IUcpProfileService
         return string.IsNullOrWhiteSpace(origin)
             ? "/checkout?ucp_session={token}"
             : $"{origin}/checkout?ucp_session={{token}}";
+    }
+
+    protected static string FirstNotEmpty(params string[] values)
+    {
+        return values?.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+
+    protected static string NormalizeUrl(string value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? null
+            : value.TrimEnd('/');
     }
 }

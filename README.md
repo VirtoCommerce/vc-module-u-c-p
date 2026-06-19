@@ -14,26 +14,26 @@
 - Catalog search через XCatalog GraphQL, выполняемый in-process.
 - Product detail lookup через XCatalog GraphQL, выполняемый in-process.
 - Cart assembly через XCart GraphQL: create, buyer-scoped list, get, full-state update.
-- Checkout snapshot и hosted handoff без адреса через stateless DataProtection token.
+- Checkout snapshot и hosted handoff с address prefill через stateless DataProtection token.
 - Order tracking через Orders module services: lookup по order id/number или cart id после handoff.
 - Structured UCP errors.
 - Buyer context propagation из HTTP headers.
-- Planned/stub endpoint для checkout update.
+- Checkout update endpoint для address hints до hosted handoff.
 
-Канонические публичные UCP endpoints публикуются без префикса `/api`. Единственный `/api` route, оставленный намеренно, это internal smoke endpoint.
+Канонические публичные UCP endpoints публикуются без префикса `/api`.
 
 ## Module Structure
 
 | Project | Назначение |
 | --- | --- |
 | `Virtocommerce.UCP.Core` | Protocol models, service contracts, module constants, options, errors. |
-| `Virtocommerce.UCP.Data` | Module data project scaffold; domain storage model пока не используется. |
+| `Virtocommerce.UCP.Data` | Provider-neutral data project; domain storage model пока не используется. |
 | `Virtocommerce.UCP.Data.SqlServer` | SQL Server provider marker. |
 | `Virtocommerce.UCP.Data.MySql` | MySQL provider marker. |
 | `Virtocommerce.UCP.Data.PostgreSql` | PostgreSQL provider marker. |
 | `Virtocommerce.UCP.ExperienceApi` | XAPI schema marker для модуля. |
 | `Virtocommerce.UCP.Web` | Module entry point, controllers, services, DI registrations. |
-| `Virtocommerce.UCP.Tests` | Unit tests для profile, catalog и cart behavior. |
+| `Virtocommerce.UCP.Tests` | Unit tests для discovery profile, catalog, cart, checkout handoff, geography и order tracking behavior. |
 
 ## Architecture
 
@@ -72,6 +72,12 @@ Buyer delegation сейчас header-based:
 
 Service добавляет buyer claims в principal, который используется для XAPI execution. Так B2B delegated context проходит через существующие Virto Commerce authorization и context mechanisms.
 
+### Integration Principle
+
+UCP is an adapter layer for the existing Virto Commerce platform and storefront contracts.
+It must not require legacy storefront GraphQL contracts, route contracts, or checkout UI contracts to change for UCP-specific scenarios.
+When UCP and storefront naming differs, the mapping belongs in the UCP module or MCP adapter, not in the storefront contract.
+
 ## Dependencies
 
 Module manifest объявляет runtime dependencies:
@@ -81,6 +87,7 @@ Module manifest объявляет runtime dependencies:
 | `VirtoCommerce.Xapi` | `3.1001.0` |
 | `VirtoCommerce.XCatalog` | `3.1000.0` |
 | `VirtoCommerce.XCart` | `3.1016.0` |
+| `VirtoCommerce.Store` | `3.1003.0` |
 | `VirtoCommerce.Orders` | `3.1000.0` |
 | `VirtoCommerce.Marketing` | `3.1000.0` |
 
@@ -103,8 +110,10 @@ Configuration читается из секции `UCP`:
 }
 ```
 
-Если `DefaultStoreId` не настроен, catalog requests должны передавать `context.store_id`.
-Checkout handoff URL строится из Virto Commerce Store URL (`Store.Url` / `Store.SecureUrl`) для `store_id`.
+Если `DefaultStoreId` не настроен, discovery читает открытые магазины из Store module.
+Если найден один магазин, `/.well-known/ucp` возвращает его как `default_store_id`, `store` и единственный элемент `stores[]`, чтобы MCP-клиент мог выбрать store без ручного `UCP_STORE_ID`.
+Если найдено несколько магазинов, `/.well-known/ucp` возвращает их в `stores[]`, но не выбирает default store автоматически: клиент должен передать явный `store_id`.
+Checkout handoff URL строится из Virto Commerce Store URL (`Store.Url` / `Store.SecureUrl`) для выбранного default store.
 `UCP:StorefrontOrigin` остаётся fallback для окружений без Store URL, а `UCP:HandoffUrlTemplate` можно использовать как explicit override.
 
 Модуль также регистрирует platform setting `UCP.Enabled`.
@@ -117,7 +126,13 @@ Checkout handoff URL строится из Virto Commerce Store URL (`Store.Url`
 GET /.well-known/ucp
 ```
 
-Возвращает UCP profile: supported capabilities, endpoint metadata, headers, auth shape, MCP tool names и structured error codes.
+Возвращает UCP profile: supported capabilities, default store metadata, endpoint metadata, headers, auth shape, MCP tool names, integration guidance и structured error codes.
+
+`mcp_tools` содержит только callable tools. Planned operations остаются в `endpoints.operations`, но не рекламируются как MCP tools.
+
+`agent_guidance` описывает checkout contract для MCP-клиента: перед hosted handoff для физических товаров нужен `shipping_address`, `billing_address` может совпадать с shipping address, а после оплаты `track_order` может использовать исходный `cart_id`.
+Адрес доставки нельзя класть в `notes`: `notes` - это только order comments. Свободный текст адреса нужно маппить в `shipping_address`. Перед checkout страна разрешается через `resolve_country` / `list_countries`, а если страна имеет regions - через `list_regions`, с platform ids из UCP geography endpoints. Например `United States, Seattle, 1 Main St Apt 100` можно сначала разрешить как `US -> USA`, затем отправить `country_code: "USA"`, `country_name: "United States"`, `city: "Seattle"`, `line1: "1 Main St"`, `line2: "Apt 100"`.
+Если адрес меняется после создания checkout/handoff, нужен `update_checkout` с новым адресом и повторный `handoff_checkout`, чтобы вернуть свежий `continue_url`.
 
 ### Catalog Search
 
@@ -227,15 +242,36 @@ Cart response включает:
 - `line_items`
 - `totals`
 - `coupons`
+- `addresses`
+- `shipments`
+- `payments`
 - `continue_url`
 - `messages`
 
 Денежные значения возвращаются в minor units.
 
+### Geography
+
+```http
+GET /ucp/v1/geography/countries?query=United%20States&limit=10
+GET /ucp/v1/geography/countries/resolve?query=KZ
+GET /ucp/v1/geography/countries/{countryId}/regions
+```
+
+Geography endpoints являются thin adapter поверх platform `ICountriesService`.
+
+- `list_countries` возвращает platform countries и поддерживает простой поиск по `id` / `name`.
+- `resolve_country` принимает ISO2, ISO3 или platform country name и возвращает platform country id, например `KZ -> KAZ`.
+- `list_regions` возвращает platform regions/provinces для country id, если они есть в справочнике.
+- `city` не резолвится через справочник и остаётся текстовым полем checkout address.
+
+MCP-клиент использует эти endpoints перед checkout, когда страна или область пришли натуральным языком. Это убирает догадки и сохраняет старый storefront/XCart address contract.
+
 ### Checkout Handoff
 
 ```http
 POST /ucp/v1/checkouts
+PATCH /ucp/v1/checkouts/{checkoutId}
 GET /ucp/v1/checkouts/{checkoutId}/payment-handlers
 POST /ucp/v1/checkouts/{checkoutId}/handoff
 POST /ucp/v1/internal/handoff/restore
@@ -244,10 +280,13 @@ POST /ucp/v1/internal/handoff/restore
 Текущий checkout flow hosted-only:
 
 - `create_checkout` создаёт checkout snapshot из cart.
+- Если request содержит `shipping_address` или `billing_address`, модуль применяет их к XCart перед созданием snapshot.
+- `update_checkout` меняет address hints до оплаты и применяет адреса к XCart.
 - `handoff_checkout` возвращает `continue_url` с защищённым `ucp_session`.
+- После `update_checkout` нужно повторно вызвать `handoff_checkout`, чтобы получить новый `continue_url` с актуальным address snapshot.
 - `continue_url` использует storefront origin из Store URL, например `https://localhost:3000/checkout?ucp_session=...`.
 - `storefront_restore` валидирует `ucp_session` и возвращает cart/checkout context для storefront.
-- Shipping address, billing address, shipping method и payment details завершаются в storefront checkout.
+- Shipping method и payment details завершаются в storefront checkout.
 
 Request model уже содержит optional hints для следующего шага:
 
@@ -258,7 +297,57 @@ Request model уже содержит optional hints для следующего
 - `payment_handler`
 - `notes`
 
-Сейчас эти поля сохраняются в handoff token, но не применяются к XCart. Это оставляет совместимый путь для следующего slice с address prefill и shipping method selection.
+`shipping_address` и `billing_address` применяются к cart через XCart `addOrUpdateCartAddress` и также сохраняются в handoff token. Перед записью адреса UCP нормализует `country_code` через платформенный `ICountriesService`: вход может содержать ISO2 вроде `KZ`, но предпочтительный flow - сначала вызвать `resolve_country` и передать platform country id вроде `KAZ`. Если для страны в платформенном справочнике есть regions, `region` / `region_id` нормализуются через `GetCountryRegionsAsync`; предпочтительно выбрать region через `list_regions`. `city` остаётся текстовым полем. `shipping_method_id` и `payment_handler` пока сохраняются как hints в token; выбор конкретного delivery/payment method требует валидных методов из storefront/XCart available methods после адреса.
+
+Если `shipping_address` или `billing_address` передаётся в UCP, `first_name` и `last_name` обязательны: модуль возвращает `invalid_request`, если recipient name не указан. Для hosted checkout address form также нужно передавать `postal_code`: без него storefront сможет показать адрес строкой, но при редактировании адреса попросит дозаполнить ZIP / Postal code и не даст сохранить форму. Для лучшего guest checkout UX желательно передавать `email`; если он не был получен от пользователя, storefront попросит дозаполнить contact поля.
+
+`ucp_session` сейчас является stateless DataProtection token, а не записью в UCP database. Token содержит checkout/cart context, address snapshot, payment hint и `expires_at`; при restore модуль расшифровывает token, проверяет срок действия и заново читает cart из XCart. Для production multi-node окружения нужен persistent shared ASP.NET Data Protection key ring для всех platform instances. Потеря key ring инвалидирует активные handoff links. Если потребуется revocation, one-time session или отсутствие payload в URL/logs, следующий production-hardening шаг - заменить token на opaque session id с server-side storage и TTL.
+
+`notes` не применяются как delivery address. Если request содержит адрес только в `notes`, response вернёт warning `shipping_address_not_notes`; следующий `update_checkout` или `handoff_checkout` должен содержать заполненный `shipping_address`.
+
+Пример handoff request с address prefill:
+
+```json
+{
+  "cart_id": "cart-1",
+  "context": {
+    "store_id": "store-acme",
+    "currency": "USD",
+    "language": "en-US",
+    "buyer_id": "ucp-anonymous-123"
+  },
+  "buyer": {
+    "email": "buyer@example.com"
+  },
+  "shipping_address": {
+    "first_name": "Ada",
+    "last_name": "Buyer",
+    "line1": "1 Main St",
+    "city": "Seattle",
+    "region_id": "WA",
+    "region": "Washington",
+    "postal_code": "98101",
+    "country_code": "US",
+    "country_name": "United States",
+    "phone": "555-0100",
+    "email": "buyer@example.com"
+  },
+  "billing_address": {
+    "first_name": "Ada",
+    "last_name": "Buyer",
+    "line1": "1 Main St",
+    "city": "Seattle",
+    "region_id": "WA",
+    "region": "Washington",
+    "postal_code": "98101",
+    "country_code": "US",
+    "country_name": "United States",
+    "phone": "555-0100",
+    "email": "buyer@example.com"
+  },
+  "payment_handler": "hosted_checkout"
+}
+```
 
 ### Order Tracking
 
@@ -269,25 +358,16 @@ GET /ucp/v1/orders?cart_id={cartId}&buyer_id=user-42&culture_name=en-US
 
 `track_order` возвращает order status, order number, totals, line items, shipment snapshot, payment snapshot и shipment tracking поля, если они уже есть в order data.
 
+Order tracking snapshot включает:
+
+- order `status` / `status_display_value`
+- line item `status`
+- payment `status`, gateway, method, approval flag и billing address
+- shipment `status`, approval flag, delivery date, delivery address, tracking number/url
+
 После hosted handoff клиент обычно ещё не знает `order_id`, поэтому основной путь - lookup по исходному `cart_id`. Lookup выполняется по `CustomerOrder.ShoppingCartId` через Orders module services. Если buyer context изменился во время guest checkout, endpoint повторяет поиск без buyer filter и всё равно матчится строго по `cart_id`.
 
 Если заказ ещё не создан storefront checkout flow или не найден среди recent orders, endpoint возвращает structured error `order_not_found`.
-
-### Planned Endpoints
-
-Эти routes существуют как structured `501 Not Implemented` stubs:
-
-| Method | Path | Capability |
-| --- | --- | --- |
-| `PATCH` | `/ucp/v1/checkouts/{checkoutId}` | checkout |
-
-### Internal Smoke Endpoint
-
-```http
-GET /api/ucp/internal/catalog-smoke
-```
-
-Этот endpoint предназначен только для local diagnostics и не входит в публичную UCP route surface.
 
 ## Error Model
 
@@ -299,7 +379,6 @@ GET /api/ucp/internal/catalog-smoke
 - `cart_not_found`
 - `order_not_found`
 - `xapi_execution_failed`
-- `not_implemented`
 
 Responses включают correlation id, если он доступен. Модуль читает `X-Correlation-Id` и fallback-ится на ASP.NET Core trace identifier.
 
@@ -335,13 +414,15 @@ Virtocommerce.UCP
 7. `PUT /ucp/v1/carts/{cartId}` обновляет итоговое состояние корзины.
 8. `POST /ucp/v1/checkouts` создаёт checkout snapshot.
 9. `POST /ucp/v1/checkouts/{checkoutId}/handoff` возвращает hosted checkout `continue_url`.
-10. После оформления на storefront `GET /ucp/v1/orders?cart_id={cartId}&buyer_id={buyerId}` возвращает order tracking snapshot.
+10. `GET /ucp/v1/geography/countries/resolve?query=KZ` возвращает platform country id для checkout address.
+11. `GET /ucp/v1/geography/countries/{countryId}/regions` возвращает regions, если они есть в platform dictionary.
+12. После оформления на storefront `GET /ucp/v1/orders?cart_id={cartId}&buyer_id={buyerId}` возвращает order tracking snapshot.
 
 ## Roadmap
 
 Ближайшие области реализации:
 
-- Checkout address prefill and update.
+- Delivery/payment method selection after address-based available methods are known.
 - Full carrier-level shipment tracking events, если появится carrier integration.
 - Faceted/catalog filter schema для более богатого product discovery.
 - OAuth2/OIDC buyer delegation вместо header-only context.

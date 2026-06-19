@@ -86,6 +86,27 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
+    public async Task SearchProductsAsync_AcceptsTopLevelStoreIdAndLimit()
+    {
+        var executor = new StubXApiExecutor(SearchResponseJson);
+        var service = new UcpCatalogService(
+            executor,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultCurrency = "USD", DefaultCultureName = "en-US" }));
+
+        var response = await service.SearchProductsAsync(new UcpCatalogSearchRequest
+        {
+            StoreId = "store-acme",
+            Query = "iPhone 17 Pro",
+            Limit = 10,
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, response.Products.Count);
+        Assert.Equal("store-acme", executor.LastRequest.Variables["storeId"]);
+        Assert.Equal(10, executor.LastRequest.Variables["first"]);
+    }
+
+    [Fact]
     public async Task SearchProductsAsync_AppliesMinimumPriceFilter()
     {
         var service = new UcpCatalogService(

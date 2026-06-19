@@ -9,7 +9,7 @@ namespace Virtocommerce.UCP.Web.Controllers.Api;
 
 [ApiController]
 [Route("ucp/v1/carts")]
-public class UcpCartController : UcpControllerBase
+public class UcpCartController : ControllerBase
 {
     private readonly IUcpCartService _cartService;
 
@@ -24,14 +24,7 @@ public class UcpCartController : UcpControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> CreateCart([FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _cartService.CreateCartAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _cartService.CreateCartAsync(request, cancellationToken));
     }
 
     [HttpGet]
@@ -69,14 +62,7 @@ public class UcpCartController : UcpControllerBase
             Sort = sort,
         };
 
-        try
-        {
-            return Ok(await _cartService.ListCartsAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _cartService.ListCartsAsync(request, cancellationToken));
     }
 
     [HttpGet("{cartId}")]
@@ -101,14 +87,7 @@ public class UcpCartController : UcpControllerBase
             },
         };
 
-        try
-        {
-            return Ok(await _cartService.GetCartAsync(cartId, request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _cartService.GetCartAsync(cartId, request, cancellationToken));
     }
 
     [HttpPut("{cartId}")]
@@ -119,13 +98,6 @@ public class UcpCartController : UcpControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> UpdateCart(string cartId, [FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _cartService.UpdateCartAsync(cartId, request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _cartService.UpdateCartAsync(cartId, request, cancellationToken));
     }
 }

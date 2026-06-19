@@ -9,7 +9,7 @@ namespace Virtocommerce.UCP.Web.Controllers.Api;
 
 [ApiController]
 [Route("ucp/v1/orders")]
-public class UcpOrderController : UcpControllerBase
+public class UcpOrderController : ControllerBase
 {
     private readonly IUcpOrderService _orderService;
 
@@ -41,14 +41,7 @@ public class UcpOrderController : UcpControllerBase
             },
         };
 
-        try
-        {
-            return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
     }
 
     [HttpGet("{orderId}")]
@@ -74,13 +67,6 @@ public class UcpOrderController : UcpControllerBase
             },
         };
 
-        try
-        {
-            return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
     }
 }

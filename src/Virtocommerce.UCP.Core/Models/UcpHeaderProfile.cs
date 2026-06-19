@@ -1,19 +1,19 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpHeaderProfile
 {
-    [JsonPropertyName("correlation_id")]
+    [JsonProperty("correlation_id")]
     public string CorrelationId { get; set; }
 
-    [JsonPropertyName("idempotency_key")]
+    [JsonProperty("idempotency_key")]
     public string IdempotencyKey { get; set; }
 
-    [JsonPropertyName("agent_api_key")]
+    [JsonProperty("agent_api_key")]
     public string AgentApiKey { get; set; }
 
-    [JsonPropertyName("buyer_context")]
+    [JsonProperty("buyer_context")]
     public IList<string> BuyerContext { get; set; } = new List<string>();
 }

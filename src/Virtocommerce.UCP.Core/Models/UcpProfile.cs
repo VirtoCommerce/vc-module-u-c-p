@@ -1,37 +1,49 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpProfile
 {
-    [JsonPropertyName("ucp_version")]
+    [JsonProperty("ucp_version")]
     public string UcpVersion { get; set; }
 
-    [JsonPropertyName("platform")]
+    [JsonProperty("platform")]
     public string Platform { get; set; }
 
-    [JsonPropertyName("storefront_origin")]
+    [JsonProperty("storefront_origin")]
     public string StorefrontOrigin { get; set; }
 
-    [JsonPropertyName("endpoints")]
+    [JsonProperty("default_store_id")]
+    public string DefaultStoreId { get; set; }
+
+    [JsonProperty("store")]
+    public UcpStoreProfile Store { get; set; }
+
+    [JsonProperty("stores")]
+    public IList<UcpStoreProfile> Stores { get; set; } = new List<UcpStoreProfile>();
+
+    [JsonProperty("endpoints")]
     public UcpEndpointProfile Endpoints { get; set; }
 
-    [JsonPropertyName("capabilities")]
+    [JsonProperty("capabilities")]
     public IList<string> Capabilities { get; set; } = new List<string>();
 
-    [JsonPropertyName("payment_handlers")]
+    [JsonProperty("payment_handlers")]
     public IList<UcpPaymentHandlerProfile> PaymentHandlers { get; set; } = new List<UcpPaymentHandlerProfile>();
 
-    [JsonPropertyName("auth")]
+    [JsonProperty("auth")]
     public UcpProfileAuth Auth { get; set; }
 
-    [JsonPropertyName("headers")]
+    [JsonProperty("headers")]
     public UcpHeaderProfile Headers { get; set; }
 
-    [JsonPropertyName("mcp_tools")]
+    [JsonProperty("mcp_tools")]
     public IList<string> McpTools { get; set; } = new List<string>();
 
-    [JsonPropertyName("errors")]
+    [JsonProperty("agent_guidance")]
+    public IList<string> AgentGuidance { get; set; } = new List<string>();
+
+    [JsonProperty("errors")]
     public UcpErrorProfile Errors { get; set; }
 }

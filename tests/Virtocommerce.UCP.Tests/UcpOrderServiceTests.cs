@@ -4,14 +4,14 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
-using VirtoCommerce.OrdersModule.Core.Model;
-using VirtoCommerce.OrdersModule.Core.Model.Search;
-using VirtoCommerce.OrdersModule.Core.Services;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
 using Virtocommerce.UCP.Web.Services;
+using VirtoCommerce.OrdersModule.Core.Model;
+using VirtoCommerce.OrdersModule.Core.Model.Search;
+using VirtoCommerce.OrdersModule.Core.Services;
 using Xunit;
 
 namespace Virtocommerce.UCP.Tests;
@@ -47,6 +47,9 @@ public class UcpOrderServiceTests
         Assert.Single(response.Order.Payments);
         Assert.Equal("UPS", response.Order.Shipments[0].ShipmentMethodCode);
         Assert.Equal("1Z999", response.Order.Shipments[0].TrackingNumber);
+        Assert.Equal("ReadyToShip", response.Order.Shipments[0].Status);
+        Assert.True(response.Order.Shipments[0].Approved);
+        Assert.Equal("Paid", response.Order.Payments[0].Status);
         Assert.Contains(response.Messages, x => x.Code == "shipment_tracking_available");
 
         var criteria = orderSearchService.Criteria.Single();
@@ -184,6 +187,10 @@ public class UcpOrderServiceTests
                     ShipmentMethodOption = "Ground",
                     TrackingNumber = "1Z999",
                     TrackingUrl = "https://track.example.test/1Z999",
+                    Number = "SHIP123",
+                    Status = "ReadyToShip",
+                    IsApproved = true,
+                    DeliveryDate = DateTime.Parse("2026-06-20T09:00:00Z").ToUniversalTime(),
                     Currency = "USD",
                     DeliveryAddress = address,
                 },
@@ -195,6 +202,7 @@ public class UcpOrderServiceTests
                     Id = "payment-1",
                     Number = "PAY123",
                     IsApproved = true,
+                    Status = "Paid",
                     GatewayCode = "test",
                     Currency = "USD",
                     BillingAddress = address,

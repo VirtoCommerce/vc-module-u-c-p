@@ -1,6 +1,5 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
-//using VirtoCommerce.Platform.Data.Extensions;
 using VirtoCommerce.Platform.Data.Infrastructure;
 
 namespace Virtocommerce.UCP.Data.Repositories;
@@ -20,8 +19,6 @@ public class UCPDbContext : DbContextBase
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);
-
-        //modelBuilder.Entity<BazQuxEntity>().ToAuditableEntityTable("BazQux");
 
         switch (Database.ProviderName)
         {

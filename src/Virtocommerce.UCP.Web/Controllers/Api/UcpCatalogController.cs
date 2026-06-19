@@ -26,14 +26,7 @@ public class UcpCatalogController : ControllerBase
         [FromBody] UcpCatalogSearchRequest request,
         CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _catalogService.SearchProductsAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _catalogService.SearchProductsAsync(request, cancellationToken));
     }
 
     [HttpGet("products/{id}")]
@@ -58,13 +51,6 @@ public class UcpCatalogController : ControllerBase
             },
         };
 
-        try
-        {
-            return Ok(await _catalogService.GetProductAsync(id, request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _catalogService.GetProductAsync(id, request, cancellationToken));
     }
 }

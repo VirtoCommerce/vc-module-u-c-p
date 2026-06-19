@@ -1,0 +1,13 @@
+namespace Virtocommerce.UCP.Web.Services.Execution;
+
+internal sealed class CartExecutionRequest
+{
+    public string CartId { get; set; }
+    public string StoreId { get; set; }
+    public string Currency { get; set; }
+    public string CultureName { get; set; }
+    public string CartName { get; set; }
+    public string CartType { get; set; }
+    public string UserId { get; set; }
+    public string OrganizationId { get; set; }
+}

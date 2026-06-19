@@ -1,18 +1,18 @@
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpPaymentHandlerProfile
 {
-    [JsonPropertyName("code")]
+    [JsonProperty("code")]
     public string Code { get; set; }
 
-    [JsonPropertyName("available")]
+    [JsonProperty("available")]
     public bool Available { get; set; }
 
-    [JsonPropertyName("reason")]
+    [JsonProperty("reason")]
     public string Reason { get; set; }
 
-    [JsonPropertyName("capability")]
+    [JsonProperty("capability")]
     public string Capability { get; set; }
 }

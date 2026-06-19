@@ -15,6 +15,7 @@ public static class ModuleConstants
         public const string Cart = "cart";
         public const string Checkout = "checkout";
         public const string Order = "order";
+        public const string Geography = "geography";
     }
 
     public static class Headers
@@ -31,13 +32,10 @@ public static class ModuleConstants
         public const string HostedCheckout = "hosted_checkout";
         public const string NativeCard = "native_card";
         public const string GooglePay = "google_pay";
-        public const string PurchaseOrder = "purchase_order";
-        public const string Invoice = "invoice";
     }
 
     public static class ErrorCodes
     {
-        public const string NotImplemented = "not_implemented";
         public const string MissingStoreId = "missing_store_id";
         public const string ProductNotFound = "product_not_found";
         public const string CartNotFound = "cart_not_found";
@@ -61,13 +59,15 @@ public static class ModuleConstants
         public const string CheckoutHandoff = "/ucp/v1/checkouts/{checkoutId}/handoff";
         public const string OrderTrack = "/ucp/v1/orders/{orderId}";
         public const string OrderTrackByCart = "/ucp/v1/orders?cart_id={cartId}";
+        public const string GeographyCountries = "/ucp/v1/geography/countries";
+        public const string GeographyCountryResolve = "/ucp/v1/geography/countries/resolve";
+        public const string GeographyRegions = "/ucp/v1/geography/countries/{countryId}/regions";
         public const string StorefrontRestore = "/ucp/v1/internal/handoff/restore";
     }
 
     public static class McpTools
     {
         public const string GetStoreCapabilities = "get_store_capabilities";
-        public const string BeginBuyerAuthorization = "begin_buyer_authorization";
         public const string SearchProducts = "search_products";
         public const string GetProduct = "get_product";
         public const string CreateCart = "create_cart";
@@ -79,6 +79,9 @@ public static class ModuleConstants
         public const string GetPaymentHandlers = "get_payment_handlers";
         public const string HandoffCheckout = "handoff_checkout";
         public const string TrackOrder = "track_order";
+        public const string ListCountries = "list_countries";
+        public const string ResolveCountry = "resolve_country";
+        public const string ListRegions = "list_regions";
     }
 
     public static class Security

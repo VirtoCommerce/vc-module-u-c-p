@@ -10,6 +10,11 @@ public class UcpException : Exception
     {
         Code = code;
         StatusCode = statusCode;
+        Error = new UcpError
+        {
+            Code = code,
+            Message = message,
+        };
     }
 
     public string Code { get; }

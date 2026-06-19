@@ -9,7 +9,7 @@ namespace Virtocommerce.UCP.Web.Controllers.Api;
 
 [ApiController]
 [Route("ucp/v1/checkouts")]
-public class UcpCheckoutController : UcpControllerBase
+public class UcpCheckoutController : ControllerBase
 {
     private readonly IUcpCheckoutService _checkoutService;
 
@@ -24,20 +24,16 @@ public class UcpCheckoutController : UcpControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCheckoutResponse>> CreateCheckout([FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _checkoutService.CreateCheckoutAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _checkoutService.CreateCheckoutAsync(request, cancellationToken));
     }
 
     [HttpPatch("{checkoutId}")]
-    public IActionResult UpdateCheckout(string checkoutId)
+    [ProducesResponseType(typeof(UcpCheckoutResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
+    public async Task<ActionResult<UcpCheckoutResponse>> UpdateCheckout(string checkoutId, [FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        return NotImplementedError("Checkout update is not available in this version.", new { checkout_id = checkoutId });
+        return Ok(await _checkoutService.UpdateCheckoutAsync(checkoutId, request, cancellationToken));
     }
 
     [HttpGet("{checkoutId}/payment-handlers")]
@@ -45,14 +41,7 @@ public class UcpCheckoutController : UcpControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UcpPaymentHandlersResponse>> GetPaymentHandlers(string checkoutId, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _checkoutService.GetPaymentHandlersAsync(checkoutId, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _checkoutService.GetPaymentHandlersAsync(checkoutId, cancellationToken));
     }
 
     [HttpPost("{checkoutId}/handoff")]
@@ -61,13 +50,6 @@ public class UcpCheckoutController : UcpControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCheckoutHandoffResponse>> HandoffCheckout(string checkoutId, [FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _checkoutService.HandoffCheckoutAsync(checkoutId, request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _checkoutService.HandoffCheckoutAsync(checkoutId, request, cancellationToken));
     }
 }

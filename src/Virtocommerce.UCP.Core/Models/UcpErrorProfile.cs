@@ -1,13 +1,13 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpErrorProfile
 {
-    [JsonPropertyName("schema")]
+    [JsonProperty("schema")]
     public string Schema { get; set; }
 
-    [JsonPropertyName("codes")]
+    [JsonProperty("codes")]
     public IList<string> Codes { get; set; } = new List<string>();
 }

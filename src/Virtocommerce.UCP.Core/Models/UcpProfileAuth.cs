@@ -1,19 +1,19 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpProfileAuth
 {
-    [JsonPropertyName("agent")]
+    [JsonProperty("agent")]
     public string Agent { get; set; }
 
-    [JsonPropertyName("anonymous_catalog")]
+    [JsonProperty("anonymous_catalog")]
     public bool AnonymousCatalog { get; set; }
 
-    [JsonPropertyName("buyer_delegation")]
+    [JsonProperty("buyer_delegation")]
     public string BuyerDelegation { get; set; }
 
-    [JsonPropertyName("scopes")]
+    [JsonProperty("scopes")]
     public IList<string> Scopes { get; set; } = new List<string>();
 }

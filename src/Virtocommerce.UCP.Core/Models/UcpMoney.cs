@@ -1,16 +1,15 @@
-using System;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpMoney
 {
-    [JsonPropertyName("amount")]
+    [JsonProperty("amount")]
     public long Amount { get; set; }
 
-    [JsonPropertyName("currency")]
+    [JsonProperty("currency")]
     public string Currency { get; set; }
 
-    [JsonPropertyName("formatted_amount")]
+    [JsonProperty("formatted_amount")]
     public string FormattedAmount { get; set; }
 }

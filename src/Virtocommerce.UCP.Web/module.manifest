@@ -9,6 +9,7 @@
     <dependency id="VirtoCommerce.Xapi" version="3.1001.0" />
     <dependency id="VirtoCommerce.XCatalog" version="3.1000.0" />
     <dependency id="VirtoCommerce.XCart" version="3.1016.0" />
+    <dependency id="VirtoCommerce.Store" version="3.1003.0" />
     <dependency id="VirtoCommerce.Orders" version="3.1000.0" />
     <dependency id="VirtoCommerce.Marketing" version="3.1000.0" />
   </dependencies>
@@ -36,6 +37,6 @@
 
   <releaseNotes>Initial UCP discovery and XAPI in-process catalog foundation.</releaseNotes>
   <copyright>Copyright © 2026 VirtoCommerce. All rights reserved</copyright>
-  <tags>ucp ai agent commerce mcp</tags>
+  <tags>ucp commerce mcp checkout catalog cart</tags>
   <useFullTypeNameInSwagger>false</useFullTypeNameInSwagger>
 </module>

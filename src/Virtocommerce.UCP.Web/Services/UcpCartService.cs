@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -11,34 +10,40 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Services.Execution;
+using VirtoCommerce.Platform.Core.Common;
 
 namespace Virtocommerce.UCP.Web.Services;
 
-public class UcpCartService : IUcpCartService
+public class UcpCartService : UcpServiceBase, IUcpCartService
 {
     private const string DefaultCartName = "default";
     private const string DefaultCartType = "cart";
     private const int DefaultListLimit = 10;
     private const int MaxListLimit = 50;
+    private const int BillingAddressType = 1;
+    private const int ShippingAddressType = 2;
 
-    private readonly IXApiInProcessExecutor _xapiExecutor;
-    private readonly IHttpContextAccessor _httpContextAccessor;
+    private readonly IXApiInProcessExecutor _xApiExecutor;
+    private readonly ICountriesService _countriesService;
     private readonly UcpOptions _options;
 
     public UcpCartService(
-        IXApiInProcessExecutor xapiExecutor,
+        IXApiInProcessExecutor xApiExecutor,
         IHttpContextAccessor httpContextAccessor,
-        IOptions<UcpOptions> options)
+        IOptions<UcpOptions> options,
+        ICountriesService countriesService = null)
+        : base(httpContextAccessor)
     {
-        _xapiExecutor = xapiExecutor;
-        _httpContextAccessor = httpContextAccessor;
+        _xApiExecutor = xApiExecutor;
+        _countriesService = countriesService;
         _options = options.Value;
     }
 
     public virtual async Task<UcpCartResponse> CreateCartAsync(UcpCartRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCartRequest();
-        var cartRequest = NormalizeRequest(request, generateAnonymousBuyer: true);
+        var cartRequest = BuildCartExecutionRequest(request, generateAnonymousBuyer: true);
 
         if (request.LineItems.Count == 0)
         {
@@ -67,7 +72,7 @@ public class UcpCartService : IUcpCartService
     public virtual async Task<UcpCartListResponse> ListCartsAsync(UcpCartListRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCartListRequest();
-        var cartRequest = NormalizeRequest(new UcpCartRequest { Context = request.Context }, allowAnonymousFallback: false);
+        var cartRequest = BuildCartExecutionRequest(new UcpCartRequest { Context = request.Context }, allowAnonymousFallback: false);
 
         if (string.IsNullOrWhiteSpace(cartRequest.UserId))
         {
@@ -86,7 +91,7 @@ public class UcpCartService : IUcpCartService
             ["sort"] = request.Sort,
         };
 
-        var result = await _xapiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
         {
             Query = ListCartsQuery,
             OperationName = "UcpListCarts",
@@ -116,7 +121,7 @@ public class UcpCartService : IUcpCartService
         ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
 
         request ??= new UcpCartRequest();
-        var cartRequest = NormalizeRequest(request, allowAnonymousFallback: false);
+        var cartRequest = BuildCartExecutionRequest(request, allowAnonymousFallback: false);
         cartRequest.CartId = cartId;
 
         var cartElement = await ExecuteGetCartAsync(cartRequest, cancellationToken);
@@ -133,7 +138,7 @@ public class UcpCartService : IUcpCartService
         ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
 
         request ??= new UcpCartRequest();
-        var cartRequest = NormalizeRequest(request, allowAnonymousFallback: false);
+        var cartRequest = BuildCartExecutionRequest(request, allowAnonymousFallback: false);
         cartRequest.CartId = cartId;
 
         var currentCart = await ExecuteGetCartAsync(cartRequest, cancellationToken);
@@ -211,7 +216,68 @@ public class UcpCartService : IUcpCartService
         return CreateResponse(cartElement);
     }
 
-    protected virtual CartExecutionRequest NormalizeRequest(UcpCartRequest request, bool generateAnonymousBuyer = false, bool allowAnonymousFallback = true)
+    public virtual async Task<UcpCartResponse> ApplyCheckoutDataAsync(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
+
+        request ??= new UcpCheckoutRequest();
+        var cartRequest = BuildCartExecutionRequest(new UcpCartRequest { Context = request.Context }, allowAnonymousFallback: false);
+        cartRequest.CartId = cartId;
+
+        var cartElement = await ExecuteGetCartAsync(cartRequest, cancellationToken);
+        if (cartElement.ValueKind == JsonValueKind.Null)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.CartNotFound, $"Cart '{cartId}' was not found.", StatusCodes.Status404NotFound);
+        }
+
+        cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(cartElement, "customerId"));
+        cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(cartElement, "organizationId"));
+
+        var shippingAddress = await PrepareAddressAsync(request.ShippingAddress, request.Buyer, cancellationToken);
+        var billingAddress = await PrepareAddressAsync(request.BillingAddress, request.Buyer, cancellationToken);
+
+        if (shippingAddress != null)
+        {
+            ValidateRecipientName(shippingAddress, "shipping_address");
+
+            cartElement = await ExecuteCartMutationAsync(
+                "addOrUpdateCartAddress",
+                "UcpAddOrUpdateShippingAddress",
+                cartRequest,
+                BuildAddressCommand(cartRequest, shippingAddress, ShippingAddressType),
+                cancellationToken);
+
+            cartElement = await ExecuteCartMutationAsync(
+                "addOrUpdateCartShipment",
+                "UcpAddOrUpdateShipmentAddress",
+                cartRequest,
+                BuildShipmentCommand(cartRequest, shippingAddress, ReadFirstArrayObjectString(cartElement, "shipments", "id")),
+                cancellationToken);
+        }
+
+        if (billingAddress != null)
+        {
+            ValidateRecipientName(billingAddress, "billing_address");
+
+            cartElement = await ExecuteCartMutationAsync(
+                "addOrUpdateCartAddress",
+                "UcpAddOrUpdateBillingAddress",
+                cartRequest,
+                BuildAddressCommand(cartRequest, billingAddress, BillingAddressType),
+                cancellationToken);
+
+            cartElement = await ExecuteCartMutationAsync(
+                "addOrUpdateCartPayment",
+                "UcpAddOrUpdatePaymentAddress",
+                cartRequest,
+                BuildPaymentCommand(cartRequest, billingAddress, ReadFirstArrayObjectString(cartElement, "payments", "id")),
+                cancellationToken);
+        }
+
+        return CreateResponse(cartElement);
+    }
+
+    private CartExecutionRequest BuildCartExecutionRequest(UcpCartRequest request, bool generateAnonymousBuyer = false, bool allowAnonymousFallback = true)
     {
         var buyerId = FirstNotEmpty(GetBuyerUserId(), request.Context?.BuyerId);
         if (string.IsNullOrWhiteSpace(buyerId) && generateAnonymousBuyer)
@@ -221,18 +287,18 @@ public class UcpCartService : IUcpCartService
 
         var result = new CartExecutionRequest
         {
-            StoreId = FirstNotEmpty(request.Context?.StoreId, _options.DefaultStoreId),
-            Currency = FirstNotEmpty(request.Context?.Currency, _options.DefaultCurrency),
-            CultureName = FirstNotEmpty(request.Context?.Language, _options.DefaultCultureName),
-            CartName = FirstNotEmpty(request.Context?.CartName, DefaultCartName),
-            CartType = FirstNotEmpty(request.Context?.CartType, DefaultCartType),
-            UserId = allowAnonymousFallback ? FirstNotEmpty(buyerId, "ucp-anonymous") : buyerId,
-            OrganizationId = FirstNotEmpty(GetBuyerOrganizationId(), request.Context?.OrganizationId),
+            StoreId = FirstNotEmpty(request.StoreId, request.Context?.StoreId, _options.DefaultStoreId),
+            Currency = FirstNotEmpty(request.Currency, request.Context?.Currency, _options.DefaultCurrency),
+            CultureName = FirstNotEmpty(request.Language, request.Context?.Language, _options.DefaultCultureName),
+            CartName = FirstNotEmpty(request.CartName, request.Context?.CartName, DefaultCartName),
+            CartType = FirstNotEmpty(request.CartType, request.Context?.CartType, DefaultCartType),
+            UserId = allowAnonymousFallback ? FirstNotEmpty(request.BuyerId, buyerId, "ucp-anonymous") : FirstNotEmpty(request.BuyerId, buyerId),
+            OrganizationId = FirstNotEmpty(request.OrganizationId, GetBuyerOrganizationId(), request.Context?.OrganizationId),
         };
 
         if (string.IsNullOrWhiteSpace(result.StoreId))
         {
-            throw CreateException(ModuleConstants.ErrorCodes.MissingStoreId, "context.store_id is required when UCP:DefaultStoreId is not configured.");
+            throw CreateException(ModuleConstants.ErrorCodes.MissingStoreId, "store_id or context.store_id is required when UCP:DefaultStoreId is not configured.");
         }
 
         if (string.IsNullOrWhiteSpace(result.Currency))
@@ -256,7 +322,7 @@ public class UcpCartService : IUcpCartService
         }
     }
 
-    protected virtual async Task<JsonElement> ExecuteGetCartAsync(CartExecutionRequest cartRequest, CancellationToken cancellationToken)
+    private async Task<JsonElement> ExecuteGetCartAsync(CartExecutionRequest cartRequest, CancellationToken cancellationToken)
     {
         var variables = new Dictionary<string, object>
         {
@@ -269,7 +335,7 @@ public class UcpCartService : IUcpCartService
             ["cartType"] = cartRequest.CartType,
         };
 
-        var result = await _xapiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
         {
             Query = GetCartQuery,
             OperationName = "UcpGetCart",
@@ -281,9 +347,9 @@ public class UcpCartService : IUcpCartService
         return document.RootElement.GetProperty("data").GetProperty("cart").Clone();
     }
 
-    protected virtual async Task<JsonElement> ExecuteCartMutationAsync(string mutationName, string operationName, CartExecutionRequest cartRequest, IDictionary<string, object> command, CancellationToken cancellationToken)
+    private async Task<JsonElement> ExecuteCartMutationAsync(string mutationName, string operationName, CartExecutionRequest cartRequest, IDictionary<string, object> command, CancellationToken cancellationToken)
     {
-        var result = await _xapiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
         {
             Query = BuildCartMutation(mutationName, operationName),
             OperationName = operationName,
@@ -295,7 +361,7 @@ public class UcpCartService : IUcpCartService
         return document.RootElement.GetProperty("data").GetProperty(mutationName).Clone();
     }
 
-    protected virtual IDictionary<string, object> BuildAddItemCommand(CartExecutionRequest request, string cartId, UcpCartLineItemRequest lineItem)
+    private IDictionary<string, object> BuildAddItemCommand(CartExecutionRequest request, string cartId, UcpCartLineItemRequest lineItem)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = FirstNotEmpty(cartId, request.CartId);
@@ -304,7 +370,7 @@ public class UcpCartService : IUcpCartService
         return command;
     }
 
-    protected virtual IDictionary<string, object> BuildLineItemCommand(CartExecutionRequest request, string lineItemId)
+    private IDictionary<string, object> BuildLineItemCommand(CartExecutionRequest request, string lineItemId)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -312,14 +378,14 @@ public class UcpCartService : IUcpCartService
         return command;
     }
 
-    protected virtual IDictionary<string, object> BuildQuantityCommand(CartExecutionRequest request, string lineItemId, int quantity)
+    private IDictionary<string, object> BuildQuantityCommand(CartExecutionRequest request, string lineItemId, int quantity)
     {
         var command = BuildLineItemCommand(request, lineItemId);
         command["quantity"] = quantity;
         return command;
     }
 
-    protected virtual IDictionary<string, object> BuildCouponCommand(CartExecutionRequest request, string coupon)
+    private IDictionary<string, object> BuildCouponCommand(CartExecutionRequest request, string coupon)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -327,7 +393,220 @@ public class UcpCartService : IUcpCartService
         return command;
     }
 
-    protected virtual IDictionary<string, object> BuildBaseCommand(CartExecutionRequest request)
+    private IDictionary<string, object> BuildAddressCommand(CartExecutionRequest request, UcpCheckoutAddress address, int addressType)
+    {
+        var command = BuildBaseCommand(request);
+        command["cartId"] = request.CartId;
+        command["address"] = BuildAddress(address, addressType);
+        return command;
+    }
+
+    private IDictionary<string, object> BuildShipmentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string shipmentId)
+    {
+        var command = BuildBaseCommand(request);
+        command["cartId"] = request.CartId;
+        var shipment = new Dictionary<string, object>
+        {
+            ["deliveryAddress"] = BuildAddress(address, ShippingAddressType),
+        };
+
+        AddIfNotEmpty(shipment, "id", shipmentId);
+        command["shipment"] = shipment;
+        return command;
+    }
+
+    private IDictionary<string, object> BuildPaymentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string paymentId)
+    {
+        var command = BuildBaseCommand(request);
+        command["cartId"] = request.CartId;
+        var payment = new Dictionary<string, object>
+        {
+            ["billingAddress"] = BuildAddress(address, BillingAddressType),
+        };
+
+        AddIfNotEmpty(payment, "id", paymentId);
+        command["payment"] = payment;
+        return command;
+    }
+
+    protected virtual IDictionary<string, object> BuildAddress(UcpCheckoutAddress address, int addressType)
+    {
+        var postalCode = address.PostalCode ?? string.Empty;
+        var result = new Dictionary<string, object>
+        {
+            ["addressType"] = addressType,
+            ["postalCode"] = postalCode,
+            ["zip"] = postalCode,
+        };
+
+        AddIfNotEmpty(result, "key", address.Id);
+        AddIfNotEmpty(result, "id", address.Id);
+        AddIfNotEmpty(result, "name", address.Name);
+        AddIfNotEmpty(result, "organization", address.Organization);
+        AddIfNotEmpty(result, "firstName", address.FirstName);
+        AddIfNotEmpty(result, "lastName", address.LastName);
+        AddIfNotEmpty(result, "line1", address.Line1);
+        AddIfNotEmpty(result, "line2", address.Line2);
+        AddIfNotEmpty(result, "city", address.City);
+        AddIfNotEmpty(result, "regionName", address.Region);
+        AddIfNotEmpty(result, "regionId", address.RegionId);
+        AddIfNotEmpty(result, "countryCode", address.CountryCode);
+        AddIfNotEmpty(result, "countryName", address.CountryName);
+        AddIfNotEmpty(result, "phone", address.Phone);
+        AddIfNotEmpty(result, "email", address.Email);
+
+        return result;
+    }
+
+    protected virtual async Task<UcpCheckoutAddress> PrepareAddressAsync(UcpCheckoutAddress address, UcpCheckoutBuyer buyer, CancellationToken cancellationToken)
+    {
+        if (address == null)
+        {
+            return null;
+        }
+
+        var result = CloneAddress(address);
+        ApplyBuyerContact(result, buyer);
+        await NormalizeCountryAndRegionAsync(result, cancellationToken);
+
+        return result;
+    }
+
+    protected virtual async Task NormalizeCountryAndRegionAsync(UcpCheckoutAddress address, CancellationToken cancellationToken)
+    {
+        if (_countriesService == null || address == null)
+        {
+            return;
+        }
+
+        var country = await ResolveCountryAsync(address, cancellationToken);
+        if (country == null)
+        {
+            return;
+        }
+
+        address.CountryCode = country.Id;
+        address.CountryName = country.Name;
+
+        await NormalizeRegionAsync(address, country.Id, cancellationToken);
+    }
+
+    protected virtual async Task<Country> ResolveCountryAsync(UcpCheckoutAddress address, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(address.CountryCode))
+        {
+            try
+            {
+                return _countriesService.GetByCode(address.CountryCode.Trim());
+            }
+            catch (ArgumentException)
+            {
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(address.CountryName))
+        {
+            return null;
+        }
+
+        var countries = await _countriesService.GetCountriesAsync();
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return countries.FirstOrDefault(country => string.Equals(country.Name, address.CountryName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    protected virtual async Task NormalizeRegionAsync(UcpCheckoutAddress address, string countryId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(countryId) || string.IsNullOrWhiteSpace(FirstNotEmpty(address.RegionId, address.Region)))
+        {
+            return;
+        }
+
+        var regions = await _countriesService.GetCountryRegionsAsync(countryId);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var region = regions.FirstOrDefault(x => string.Equals(x.Id, address.RegionId, StringComparison.OrdinalIgnoreCase))
+            ?? regions.FirstOrDefault(x => string.Equals(x.Name, address.Region, StringComparison.OrdinalIgnoreCase))
+            ?? regions.FirstOrDefault(x => string.Equals(x.Id, address.Region, StringComparison.OrdinalIgnoreCase));
+
+        if (region == null)
+        {
+            return;
+        }
+
+        address.RegionId = region.Id;
+        address.Region = region.Name;
+    }
+
+    protected virtual void ApplyBuyerContact(UcpCheckoutAddress address, UcpCheckoutBuyer buyer)
+    {
+        if (address == null || buyer == null)
+        {
+            return;
+        }
+
+        AddBuyerName(address, buyer.Name);
+        address.Email = FirstNotEmpty(address.Email, buyer.Email);
+        address.Phone = FirstNotEmpty(address.Phone, buyer.Phone);
+    }
+
+    protected virtual void AddBuyerName(UcpCheckoutAddress address, string buyerName)
+    {
+        if (address == null || string.IsNullOrWhiteSpace(buyerName))
+        {
+            return;
+        }
+
+        var names = buyerName.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length > 0)
+        {
+            address.FirstName = FirstNotEmpty(address.FirstName, names[0]);
+        }
+
+        if (names.Length > 1)
+        {
+            address.LastName = FirstNotEmpty(address.LastName, names[1]);
+        }
+    }
+
+    protected virtual void ValidateRecipientName(UcpCheckoutAddress address, string fieldName)
+    {
+        if (address == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(address.FirstName) || string.IsNullOrWhiteSpace(address.LastName))
+        {
+            throw CreateException(
+                ModuleConstants.ErrorCodes.InvalidRequest,
+                $"{fieldName}.first_name and {fieldName}.last_name are required.");
+        }
+    }
+
+    protected virtual UcpCheckoutAddress CloneAddress(UcpCheckoutAddress address)
+    {
+        return new UcpCheckoutAddress
+        {
+            Id = address.Id,
+            Name = address.Name,
+            Organization = address.Organization,
+            FirstName = address.FirstName,
+            LastName = address.LastName,
+            Line1 = address.Line1,
+            Line2 = address.Line2,
+            City = address.City,
+            Region = address.Region,
+            RegionId = address.RegionId,
+            PostalCode = address.PostalCode,
+            CountryCode = address.CountryCode,
+            CountryName = address.CountryName,
+            Phone = address.Phone,
+            Email = address.Email,
+        };
+    }
+
+    private IDictionary<string, object> BuildBaseCommand(CartExecutionRequest request)
     {
         return new Dictionary<string, object>
         {
@@ -376,6 +655,9 @@ public class UcpCartService : IUcpCartService
                 FeeTotal = ReadMoney(element, "feeTotal"),
             },
             Coupons = ReadCartCoupons(element),
+            Addresses = ReadCartAddresses(element),
+            Shipments = ReadCartShipments(element),
+            Payments = ReadCartPayments(element),
         };
 
         cart.ContinueUrl = BuildContinueUrl(cart.Id);
@@ -424,6 +706,83 @@ public class UcpCartService : IUcpCartService
                 Applied = ReadBoolean(coupon, "isAppliedSuccessfully"),
             })
             .ToList();
+    }
+
+    protected virtual IList<UcpCartAddress> ReadCartAddresses(JsonElement element)
+    {
+        if (!element.TryGetProperty("addresses", out var addresses) || addresses.ValueKind != JsonValueKind.Array)
+        {
+            return new List<UcpCartAddress>();
+        }
+
+        return addresses.EnumerateArray()
+            .Select(ReadCartAddress)
+            .ToList();
+    }
+
+    protected virtual IList<UcpCartShipment> ReadCartShipments(JsonElement element)
+    {
+        if (!element.TryGetProperty("shipments", out var shipments) || shipments.ValueKind != JsonValueKind.Array)
+        {
+            return new List<UcpCartShipment>();
+        }
+
+        return shipments.EnumerateArray()
+            .Select(shipment => new UcpCartShipment
+            {
+                Id = ReadString(shipment, "id"),
+                ShipmentMethodCode = ReadString(shipment, "shipmentMethodCode"),
+                ShipmentMethodOption = ReadString(shipment, "shipmentMethodOption"),
+                Price = ReadMoney(shipment, "price"),
+                DeliveryAddress = shipment.TryGetProperty("deliveryAddress", out var address) ? ReadCartAddress(address) : null,
+            })
+            .ToList();
+    }
+
+    protected virtual IList<UcpCartPayment> ReadCartPayments(JsonElement element)
+    {
+        if (!element.TryGetProperty("payments", out var payments) || payments.ValueKind != JsonValueKind.Array)
+        {
+            return new List<UcpCartPayment>();
+        }
+
+        return payments.EnumerateArray()
+            .Select(payment => new UcpCartPayment
+            {
+                Id = ReadString(payment, "id"),
+                PaymentGatewayCode = ReadString(payment, "paymentGatewayCode"),
+                Amount = ReadMoney(payment, "amount"),
+                BillingAddress = payment.TryGetProperty("billingAddress", out var address) ? ReadCartAddress(address) : null,
+            })
+            .ToList();
+    }
+
+    protected virtual UcpCartAddress ReadCartAddress(JsonElement address)
+    {
+        if (address.ValueKind == JsonValueKind.Null)
+        {
+            return null;
+        }
+
+        return new UcpCartAddress
+        {
+            Id = FirstNotEmpty(ReadString(address, "id"), ReadString(address, "key")),
+            AddressType = ReadAddressType(address),
+            Name = ReadString(address, "name"),
+            Organization = ReadString(address, "organization"),
+            FirstName = ReadString(address, "firstName"),
+            LastName = ReadString(address, "lastName"),
+            Line1 = ReadString(address, "line1"),
+            Line2 = ReadString(address, "line2"),
+            City = ReadString(address, "city"),
+            Region = ReadString(address, "regionName"),
+            RegionId = ReadString(address, "regionId"),
+            PostalCode = FirstNotEmpty(ReadString(address, "postalCode"), ReadString(address, "zip")),
+            CountryCode = ReadString(address, "countryCode"),
+            CountryName = ReadString(address, "countryName"),
+            Phone = ReadString(address, "phone"),
+            Email = ReadString(address, "email"),
+        };
     }
 
     protected virtual IList<UcpCart> ReadCarts(JsonElement element)
@@ -480,121 +839,12 @@ public class UcpCartService : IUcpCartService
         };
     }
 
-    protected virtual JsonDocument ParseGraphQlResult(XApiExecutionResult result, string source)
-    {
-        if (result == null || string.IsNullOrWhiteSpace(result.Json))
-        {
-            throw CreateException(ModuleConstants.ErrorCodes.XApiExecutionFailed, $"{source} returned an empty response.", StatusCodes.Status502BadGateway);
-        }
-
-        var document = JsonDocument.Parse(result.Json);
-        var hasErrors = document.RootElement.TryGetProperty("errors", out var errors);
-
-        if (!result.Succeeded || hasErrors)
-        {
-            var message = errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
-                ? ReadString(errors[0], "message") ?? $"{source} execution failed."
-                : $"{source} execution failed.";
-
-            document.Dispose();
-            throw CreateException(ModuleConstants.ErrorCodes.XApiExecutionFailed, message, StatusCodes.Status502BadGateway);
-        }
-
-        return document;
-    }
-
-    protected virtual ClaimsPrincipal BuildBuyerPrincipal(string buyerUserId = null, string organizationId = null)
-    {
-        var httpUser = _httpContextAccessor.HttpContext?.User;
-        buyerUserId = FirstNotEmpty(buyerUserId, GetBuyerUserId());
-        organizationId = FirstNotEmpty(organizationId, GetBuyerOrganizationId());
-
-        if (string.IsNullOrWhiteSpace(buyerUserId) && string.IsNullOrWhiteSpace(organizationId))
-        {
-            return httpUser;
-        }
-
-        var claims = new List<Claim>();
-        if (httpUser != null)
-        {
-            claims.AddRange(httpUser.Claims);
-        }
-
-        if (!string.IsNullOrWhiteSpace(buyerUserId))
-        {
-            claims.Add(new Claim(ClaimTypes.NameIdentifier, buyerUserId));
-            claims.Add(new Claim("sub", buyerUserId));
-            claims.Add(new Claim("user_id", buyerUserId));
-        }
-
-        if (!string.IsNullOrWhiteSpace(organizationId))
-        {
-            claims.Add(new Claim("organization_id", organizationId));
-            claims.Add(new Claim("OrganizationId", organizationId));
-            claims.Add(new Claim("org_id", organizationId));
-            claims.Add(new Claim("virto:organization_id", organizationId));
-        }
-
-        return new ClaimsPrincipal(new ClaimsIdentity(claims, "ucp_delegated_buyer"));
-    }
-
-    protected virtual string GetBuyerUserId()
-    {
-        return GetHeader(ModuleConstants.Headers.BuyerUserId);
-    }
-
-    protected virtual string GetBuyerOrganizationId()
-    {
-        return GetHeader(ModuleConstants.Headers.BuyerOrganizationId);
-    }
-
-    protected virtual string GetHeader(string name)
-    {
-        var headers = _httpContextAccessor.HttpContext?.Request.Headers;
-        return headers != null && headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
-    }
-
-    protected virtual string GetCorrelationId()
-    {
-        return FirstNotEmpty(GetHeader(ModuleConstants.Headers.CorrelationId), _httpContextAccessor.HttpContext?.TraceIdentifier);
-    }
-
     protected virtual string BuildContinueUrl(string cartId)
     {
         var origin = _options.StorefrontOrigin?.TrimEnd('/');
         return string.IsNullOrWhiteSpace(origin) || string.IsNullOrWhiteSpace(cartId)
             ? null
             : $"{origin}/cart?cart_id={Uri.EscapeDataString(cartId)}";
-    }
-
-    protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
-    {
-        return new UcpException(code, message, statusCode)
-        {
-            Error = new UcpError
-            {
-                Code = code,
-                Message = message,
-                CorrelationId = GetCorrelationId(),
-            },
-        };
-    }
-
-    protected virtual UcpResponseMetadata CreateMetadata(string status, string capability)
-    {
-        return new UcpResponseMetadata
-        {
-            Version = ModuleConstants.UcpVersion,
-            Status = status,
-            CorrelationId = GetCorrelationId(),
-            Capabilities =
-            {
-                [capability] =
-                [
-                    new UcpCapabilityVersion { Version = ModuleConstants.UcpVersion },
-                ],
-            },
-        };
     }
 
     protected static bool HasDesiredMatch(UcpCartLineItem current, IEnumerable<UcpCartLineItemRequest> desiredItems)
@@ -611,6 +861,26 @@ public class UcpCartService : IUcpCartService
             .Select(coupon => coupon.Trim())
             .ToHashSet(StringComparer.OrdinalIgnoreCase)
             ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    protected static void AddIfNotEmpty(IDictionary<string, object> target, string key, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            target[key] = value;
+        }
+    }
+
+    protected static string ReadAddressType(JsonElement element)
+    {
+        return ReadInt(element, "addressType") switch
+        {
+            BillingAddressType => "billing",
+            ShippingAddressType => "shipping",
+            3 => "billing_and_shipping",
+            4 => "pickup",
+            _ => null,
+        };
     }
 
     protected static string BuildCartMutation(string mutationName, string operationName)
@@ -633,56 +903,23 @@ public class UcpCartService : IUcpCartService
             "removeCartItem" => "RemoveItem",
             "addCoupon" => "AddCoupon",
             "removeCoupon" => "RemoveCoupon",
+            "addOrUpdateCartAddress" => "AddOrUpdateCartAddress",
+            "addOrUpdateCartShipment" => "AddOrUpdateCartShipment",
+            "addOrUpdateCartPayment" => "AddOrUpdateCartPayment",
             _ => throw new InvalidOperationException($"Unsupported cart mutation '{mutationName}'."),
         };
     }
 
-    protected static string ReadString(JsonElement element, string propertyName)
+    protected static string ReadFirstArrayObjectString(JsonElement element, string arrayPropertyName, string propertyName)
     {
-        return element.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.Null
-            ? value.ToString()
-            : null;
-    }
+        if (!element.TryGetProperty(arrayPropertyName, out var array) || array.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
 
-    protected static bool ReadBoolean(JsonElement element, string propertyName)
-    {
-        return element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.True;
-    }
-
-    protected static decimal ReadDecimal(JsonElement element, string propertyName)
-    {
-        return element.TryGetProperty(propertyName, out var value) && value.TryGetDecimal(out var result)
-            ? result
-            : 0;
-    }
-
-    protected static int ReadInt(JsonElement element, string propertyName)
-    {
-        return element.TryGetProperty(propertyName, out var value) && value.TryGetInt32(out var result)
-            ? result
-            : 0;
-    }
-
-    protected static long ToMinorUnits(decimal amount)
-    {
-        return Convert.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
-    }
-
-    protected static string FirstNotEmpty(params string[] values)
-    {
-        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-    }
-
-    protected class CartExecutionRequest
-    {
-        public string CartId { get; set; }
-        public string StoreId { get; set; }
-        public string Currency { get; set; }
-        public string CultureName { get; set; }
-        public string CartName { get; set; }
-        public string CartType { get; set; }
-        public string UserId { get; set; }
-        public string OrganizationId { get; set; }
+        return array.EnumerateArray()
+            .Select(item => ReadString(item, propertyName))
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
     protected const string MoneyFields = """
@@ -725,6 +962,78 @@ public class UcpCartService : IUcpCartService
         coupons {
           code
           isAppliedSuccessfully
+        }
+        addresses {
+          id
+          key
+          addressType
+          name
+          organization
+          firstName
+          lastName
+          line1
+          line2
+          city
+          countryCode
+          countryName
+          regionId
+          regionName
+          zip
+          phone
+          email
+        }
+        shipments {
+          id
+          shipmentMethodCode
+          shipmentMethodOption
+          price {
+        {{MoneyFields}}
+          }
+          deliveryAddress {
+            id
+            key
+            addressType
+            name
+            organization
+            firstName
+            lastName
+            line1
+            line2
+            city
+            countryCode
+            countryName
+            regionId
+            regionName
+            zip
+            phone
+            email
+          }
+        }
+        payments {
+          id
+          paymentGatewayCode
+          amount {
+        {{MoneyFields}}
+          }
+          billingAddress {
+            id
+            key
+            addressType
+            name
+            organization
+            firstName
+            lastName
+            line1
+            line2
+            city
+            countryCode
+            countryName
+            regionId
+            regionName
+            zip
+            phone
+            email
+          }
         }
         items {
           id

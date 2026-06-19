@@ -1,19 +1,19 @@
 using System.Collections.Generic;
-using System.Text.Json.Serialization;
+using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
 
 public class UcpError
 {
-    [JsonPropertyName("code")]
+    [JsonProperty("code")]
     public string Code { get; set; }
 
-    [JsonPropertyName("message")]
+    [JsonProperty("message")]
     public string Message { get; set; }
 
-    [JsonPropertyName("correlation_id")]
+    [JsonProperty("correlation_id")]
     public string CorrelationId { get; set; }
 
-    [JsonPropertyName("details")]
+    [JsonProperty("details")]
     public IDictionary<string, object> Details { get; set; } = new Dictionary<string, object>();
 }

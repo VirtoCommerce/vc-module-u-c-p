@@ -8,8 +8,8 @@ using Microsoft.AspNetCore.Http;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
 using VirtoCommerce.Xapi.Core.Infrastructure;
-using XCatalogDataAssemblyMarker = VirtoCommerce.XCatalog.Data.DataAssemblyMarker;
 using XCartDataAssemblyMarker = VirtoCommerce.XCart.Data.DataAssemblyMarker;
+using XCatalogDataAssemblyMarker = VirtoCommerce.XCatalog.Data.DataAssemblyMarker;
 using XOrderDataAssemblyMarker = VirtoCommerce.XOrder.Data.DataAssemblyMarker;
 
 namespace Virtocommerce.UCP.Web.Services;

@@ -24,13 +24,6 @@ public class UcpHandoffController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpHandoffRestoreResponse>> Restore([FromBody] UcpHandoffRestoreRequest request, CancellationToken cancellationToken)
     {
-        try
-        {
-            return Ok(await _checkoutService.RestoreHandoffAsync(request, cancellationToken));
-        }
-        catch (UcpException exception)
-        {
-            return StatusCode(exception.StatusCode, exception.Error);
-        }
+        return Ok(await _checkoutService.RestoreHandoffAsync(request, cancellationToken));
     }
 }
