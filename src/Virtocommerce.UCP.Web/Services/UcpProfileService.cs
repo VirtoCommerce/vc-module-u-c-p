@@ -320,15 +320,30 @@ public class UcpProfileService : IUcpProfileService
 
         return new UcpStoreProfile
         {
-            Id = store?.Id ?? _options.DefaultStoreId,
+            Id = ResolveStoreId(store),
             Name = store?.Name,
             Url = NormalizeUrl(store?.Url),
             SecureUrl = NormalizeUrl(store?.SecureUrl),
-            DefaultCurrency = store?.DefaultCurrency ?? _options.DefaultCurrency,
-            DefaultLanguage = store?.DefaultLanguage ?? _options.DefaultCultureName,
+            DefaultCurrency = ResolveStoreCurrency(store),
+            DefaultLanguage = ResolveStoreLanguage(store),
             Source = source,
             IsDefault = isDefault,
         };
+    }
+
+    protected virtual string ResolveStoreId(Store store)
+    {
+        return store?.Id ?? _options.DefaultStoreId;
+    }
+
+    protected virtual string ResolveStoreCurrency(Store store)
+    {
+        return store?.DefaultCurrency ?? _options.DefaultCurrency;
+    }
+
+    protected virtual string ResolveStoreLanguage(Store store)
+    {
+        return store?.DefaultLanguage ?? _options.DefaultCultureName;
     }
 
     protected virtual string GetConfiguredStorefrontOrigin(UcpStoreProfile store)

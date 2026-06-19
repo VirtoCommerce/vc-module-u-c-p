@@ -504,7 +504,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return document.RootElement.GetProperty("data").GetProperty(mutationName).Clone();
     }
 
-    private IDictionary<string, object> BuildAddItemCommand(CartExecutionRequest request, string cartId, UcpCartLineItemRequest lineItem)
+    private static Dictionary<string, object> BuildAddItemCommand(CartExecutionRequest request, string cartId, UcpCartLineItemRequest lineItem)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = FirstNotEmpty(cartId, request.CartId);
@@ -513,7 +513,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return command;
     }
 
-    private IDictionary<string, object> BuildLineItemCommand(CartExecutionRequest request, string lineItemId)
+    private static Dictionary<string, object> BuildLineItemCommand(CartExecutionRequest request, string lineItemId)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -521,14 +521,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return command;
     }
 
-    private IDictionary<string, object> BuildQuantityCommand(CartExecutionRequest request, string lineItemId, int quantity)
+    private static Dictionary<string, object> BuildQuantityCommand(CartExecutionRequest request, string lineItemId, int quantity)
     {
         var command = BuildLineItemCommand(request, lineItemId);
         command["quantity"] = quantity;
         return command;
     }
 
-    private IDictionary<string, object> BuildCouponCommand(CartExecutionRequest request, string coupon)
+    private static Dictionary<string, object> BuildCouponCommand(CartExecutionRequest request, string coupon)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -536,7 +536,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return command;
     }
 
-    private IDictionary<string, object> BuildAddressCommand(CartExecutionRequest request, UcpCheckoutAddress address, int addressType)
+    private Dictionary<string, object> BuildAddressCommand(CartExecutionRequest request, UcpCheckoutAddress address, int addressType)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -544,7 +544,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return command;
     }
 
-    private IDictionary<string, object> BuildShipmentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string shipmentId)
+    private Dictionary<string, object> BuildShipmentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string shipmentId)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
@@ -558,7 +558,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return command;
     }
 
-    private IDictionary<string, object> BuildPaymentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string paymentId)
+    private Dictionary<string, object> BuildPaymentCommand(CartExecutionRequest request, UcpCheckoutAddress address, string paymentId)
     {
         var command = BuildBaseCommand(request);
         command["cartId"] = request.CartId;
