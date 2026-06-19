@@ -422,9 +422,9 @@ public class UcpCartServiceTests
             _jsonResponses = new Queue<string>(jsonResponses);
         }
 
-        public IList<XApiExecutionRequest> Requests { get; } = new List<XApiExecutionRequest>();
+        public List<XApiExecutionRequest> Requests { get; } = [];
 
-        public IList<string> OperationNames { get; } = new List<string>();
+        public List<string> OperationNames { get; } = [];
 
         public Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {

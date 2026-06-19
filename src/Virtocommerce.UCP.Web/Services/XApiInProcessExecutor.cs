@@ -54,7 +54,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         return await ExecuteAsync(_orderDocumentExecuter, request, cancellationToken);
     }
 
-    protected virtual async Task<XApiExecutionResult> ExecuteAsync<TSchemaFactory>(
+    protected virtual Task<XApiExecutionResult> ExecuteAsync<TSchemaFactory>(
         IDocumentExecuter<TSchemaFactory> documentExecuter,
         XApiExecutionRequest request,
         CancellationToken cancellationToken)
@@ -63,6 +63,15 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Query);
 
+        return ExecuteCoreAsync(documentExecuter, request, cancellationToken);
+    }
+
+    private async Task<XApiExecutionResult> ExecuteCoreAsync<TSchemaFactory>(
+        IDocumentExecuter<TSchemaFactory> documentExecuter,
+        XApiExecutionRequest request,
+        CancellationToken cancellationToken)
+        where TSchemaFactory : ISchema
+    {
         var originalContentType = _httpContextAccessor.HttpContext?.Request.ContentType;
         if (_httpContextAccessor.HttpContext?.Request.ContentType == null)
         {

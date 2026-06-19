@@ -220,7 +220,7 @@ public class UcpOrderServiceTests
             _orders = orders.ToList();
         }
 
-        public IList<string> RequestedIds { get; } = new List<string>();
+        public List<string> RequestedIds { get; } = [];
 
         public Task<IList<CustomerOrder>> GetAsync(IList<string> ids, string responseGroup, bool clone)
         {

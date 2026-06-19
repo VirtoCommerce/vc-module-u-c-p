@@ -17,6 +17,8 @@ namespace Virtocommerce.UCP.Web.Services;
 
 public class UcpProfileService : IUcpProfileService
 {
+    private const int StoreSearchTake = 50;
+
     private static readonly string[] SupportedCapabilities =
     [
         ModuleConstants.Capabilities.Catalog,
@@ -248,19 +250,33 @@ public class UcpProfileService : IUcpProfileService
     protected virtual async Task<IList<UcpStoreProfile>> GetStoreProfilesAsync()
     {
         var configuredStore = await GetConfiguredDefaultStoreAsync();
-        if (configuredStore != null || !string.IsNullOrWhiteSpace(_options.DefaultStoreId))
+        if (HasConfiguredDefaultStore(configuredStore))
         {
-            var configuredProfile = CreateStoreProfile(
-                configuredStore,
-                isDefault: true,
-                source: configuredStore == null ? "configuration" : "store_service");
-
-            return configuredProfile == null
-                ? new List<UcpStoreProfile>()
-                : new List<UcpStoreProfile> { configuredProfile };
+            return CreateConfiguredStoreProfiles(configuredStore);
         }
 
+        return await GetDiscoveredStoreProfilesAsync();
+    }
+
+    protected virtual bool HasConfiguredDefaultStore(Store configuredStore)
+    {
+        return configuredStore != null || !string.IsNullOrWhiteSpace(_options.DefaultStoreId);
+    }
+
+    protected virtual IList<UcpStoreProfile> CreateConfiguredStoreProfiles(Store configuredStore)
+    {
+        var source = configuredStore == null ? "configuration" : "store_service";
+        var configuredProfile = CreateStoreProfile(configuredStore, isDefault: true, source);
+
+        return configuredProfile == null
+            ? new List<UcpStoreProfile>()
+            : new List<UcpStoreProfile> { configuredProfile };
+    }
+
+    protected virtual async Task<IList<UcpStoreProfile>> GetDiscoveredStoreProfilesAsync()
+    {
         var stores = await SearchOpenStoresAsync();
+
         return stores
             .Select(store => CreateStoreProfile(store, isDefault: stores.Count == 1, source: "store_search"))
             .Where(profile => profile != null)
@@ -287,7 +303,7 @@ public class UcpProfileService : IUcpProfileService
         var result = await _storeSearchService.SearchAsync(new StoreSearchCriteria
         {
             StoreStates = new[] { StoreState.Open },
-            Take = 50,
+            Take = StoreSearchTake,
         });
 
         return result?.Results?
