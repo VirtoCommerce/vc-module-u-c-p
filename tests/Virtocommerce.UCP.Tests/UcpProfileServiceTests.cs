@@ -219,7 +219,7 @@ public class UcpProfileServiceTests
     private sealed class TestUcpProfileService : UcpProfileService
     {
         private readonly Store _store;
-        private readonly IList<Store> _stores;
+        private readonly List<Store> _stores;
 
         public TestUcpProfileService(IOptions<UcpOptions> options, IHttpContextAccessor httpContextAccessor, Store store = null, IEnumerable<Store> stores = null)
             : base(options, httpContextAccessor)
@@ -235,7 +235,7 @@ public class UcpProfileServiceTests
 
         protected override Task<IList<Store>> SearchOpenStoresAsync()
         {
-            return Task.FromResult(_stores);
+            return Task.FromResult<IList<Store>>(_stores);
         }
     }
 }

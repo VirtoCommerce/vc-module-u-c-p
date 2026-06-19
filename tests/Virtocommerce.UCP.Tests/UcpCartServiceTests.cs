@@ -451,11 +451,11 @@ public class UcpCartServiceTests
 
     private sealed class StubCountriesService : ICountriesService
     {
-        private readonly IList<Country> _countries;
+        private readonly List<Country> _countries;
 
         public StubCountriesService(IList<Country> countries)
         {
-            _countries = countries;
+            _countries = countries.ToList();
         }
 
         public IList<Country> GetCountries()
@@ -465,7 +465,7 @@ public class UcpCartServiceTests
 
         public Task<IList<Country>> GetCountriesAsync()
         {
-            return Task.FromResult(_countries);
+            return Task.FromResult<IList<Country>>(_countries);
         }
 
         public Task<IList<CountryRegion>> GetCountryRegionsAsync(string countryId)

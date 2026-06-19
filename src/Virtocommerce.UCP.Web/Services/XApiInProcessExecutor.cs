@@ -39,19 +39,19 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         _httpContextAccessor = httpContextAccessor;
     }
 
-    public virtual async Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return await ExecuteAsync(_catalogDocumentExecuter, request, cancellationToken);
+        return ExecuteAsync(_catalogDocumentExecuter, request, cancellationToken);
     }
 
-    public virtual async Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return await ExecuteAsync(_cartDocumentExecuter, request, cancellationToken);
+        return ExecuteAsync(_cartDocumentExecuter, request, cancellationToken);
     }
 
-    public virtual async Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return await ExecuteAsync(_orderDocumentExecuter, request, cancellationToken);
+        return ExecuteAsync(_orderDocumentExecuter, request, cancellationToken);
     }
 
     protected virtual Task<XApiExecutionResult> ExecuteAsync<TSchemaFactory>(
