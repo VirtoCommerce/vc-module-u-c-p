@@ -213,7 +213,7 @@ public class UcpOrderServiceTests
 
     private sealed class StubCustomerOrderService : ICustomerOrderService
     {
-        private readonly IList<CustomerOrder> _orders;
+        private readonly List<CustomerOrder> _orders;
 
         public StubCustomerOrderService(params CustomerOrder[] orders)
         {
@@ -250,14 +250,14 @@ public class UcpOrderServiceTests
 
     private sealed class StubCustomerOrderSearchService : ICustomerOrderSearchService
     {
-        private readonly IList<CustomerOrder> _orders;
+        private readonly List<CustomerOrder> _orders;
 
         public StubCustomerOrderSearchService(params CustomerOrder[] orders)
         {
             _orders = orders.ToList();
         }
 
-        public IList<CustomerOrderSearchCriteria> Criteria { get; } = new List<CustomerOrderSearchCriteria>();
+        public List<CustomerOrderSearchCriteria> Criteria { get; } = [];
 
         public Task<CustomerOrderSearchResult> SearchAsync(CustomerOrderSearchCriteria criteria, bool clone)
         {

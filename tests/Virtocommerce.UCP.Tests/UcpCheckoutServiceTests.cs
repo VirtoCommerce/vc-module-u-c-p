@@ -287,7 +287,7 @@ public class UcpCheckoutServiceTests
             return Task.FromResult(new UcpCartResponse { Cart = _cart });
         }
 
-        public IList<(string cartId, UcpCheckoutRequest request)> AppliedCheckoutRequests { get; } = new List<(string cartId, UcpCheckoutRequest request)>();
+        public List<(string cartId, UcpCheckoutRequest request)> AppliedCheckoutRequests { get; } = [];
 
         public Task<UcpCartResponse> ApplyCheckoutDataAsync(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
         {

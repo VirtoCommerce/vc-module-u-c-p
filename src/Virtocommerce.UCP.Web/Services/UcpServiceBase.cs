@@ -12,6 +12,8 @@ namespace Virtocommerce.UCP.Web.Services;
 
 public abstract class UcpServiceBase
 {
+    private const decimal MinorUnitScale = 100m;
+
     private readonly IHttpContextAccessor _httpContextAccessor;
 
     protected UcpServiceBase(IHttpContextAccessor httpContextAccessor)
@@ -158,6 +160,6 @@ public abstract class UcpServiceBase
 
     protected static long ToMinorUnits(decimal amount)
     {
-        return Convert.ToInt64(decimal.Round(amount * 100m, 0, MidpointRounding.AwayFromZero));
+        return Convert.ToInt64(decimal.Round(amount * MinorUnitScale, 0, MidpointRounding.AwayFromZero));
     }
 }

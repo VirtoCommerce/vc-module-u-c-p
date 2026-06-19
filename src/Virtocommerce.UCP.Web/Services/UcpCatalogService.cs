@@ -126,20 +126,55 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
     {
         var result = new CatalogExecutionRequest
         {
-            StoreId = FirstNotEmpty(request.StoreId, request.Context?.StoreId, _options.DefaultStoreId),
-            Currency = FirstNotEmpty(request.Currency, request.Context?.Currency, _options.DefaultCurrency),
-            CultureName = FirstNotEmpty(request.Language, request.Context?.Language, _options.DefaultCultureName),
-            Limit = Math.Clamp(request.Limit ?? request.Pagination?.Limit ?? DefaultLimit, 1, MaxLimit),
-            MinPrice = request.Filters?.Price?.Min,
-            MaxPrice = request.Filters?.Price?.Max,
+            StoreId = ResolveStoreId(request),
+            Currency = ResolveCurrency(request),
+            CultureName = ResolveCultureName(request),
+            Limit = ResolveLimit(request),
+            MinPrice = ResolveMinPrice(request),
+            MaxPrice = ResolveMaxPrice(request),
         };
 
-        if (string.IsNullOrWhiteSpace(result.StoreId))
+        ValidateCatalogExecutionRequest(result);
+
+        return result;
+    }
+
+    private string ResolveStoreId(UcpCatalogSearchRequest request)
+    {
+        return FirstNotEmpty(request.StoreId, request.Context?.StoreId, _options.DefaultStoreId);
+    }
+
+    private string ResolveCurrency(UcpCatalogSearchRequest request)
+    {
+        return FirstNotEmpty(request.Currency, request.Context?.Currency, _options.DefaultCurrency);
+    }
+
+    private string ResolveCultureName(UcpCatalogSearchRequest request)
+    {
+        return FirstNotEmpty(request.Language, request.Context?.Language, _options.DefaultCultureName);
+    }
+
+    private static int ResolveLimit(UcpCatalogSearchRequest request)
+    {
+        return Math.Clamp(request.Limit ?? request.Pagination?.Limit ?? DefaultLimit, 1, MaxLimit);
+    }
+
+    private static long? ResolveMinPrice(UcpCatalogSearchRequest request)
+    {
+        return request.Filters?.Price?.Min;
+    }
+
+    private static long? ResolveMaxPrice(UcpCatalogSearchRequest request)
+    {
+        return request.Filters?.Price?.Max;
+    }
+
+    private void ValidateCatalogExecutionRequest(CatalogExecutionRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.StoreId))
         {
             throw CreateException(ModuleConstants.ErrorCodes.MissingStoreId, "store_id or context.store_id is required when UCP:DefaultStoreId is not configured.");
         }
-
-        return result;
     }
 
     protected virtual string BuildXCatalogFilter(UcpCatalogSearchRequest request)

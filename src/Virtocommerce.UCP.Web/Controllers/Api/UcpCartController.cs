@@ -32,37 +32,10 @@ public class UcpCartController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartListResponse>> ListCarts(
-        [FromQuery(Name = "store_id")] string storeId,
-        [FromQuery(Name = "currency")] string currency,
-        [FromQuery(Name = "culture_name")] string cultureName,
-        [FromQuery(Name = "cart_type")] string cartType,
-        [FromQuery(Name = "buyer_id")] string buyerId,
-        [FromQuery(Name = "organization_id")] string organizationId,
-        [FromQuery(Name = "cursor")] string cursor,
-        [FromQuery(Name = "limit")] int? limit,
-        [FromQuery(Name = "sort")] string sort,
+        [FromQuery] UcpCartListQuery query,
         CancellationToken cancellationToken)
     {
-        var request = new UcpCartListRequest
-        {
-            Context = new UcpCartContext
-            {
-                StoreId = storeId,
-                Currency = currency,
-                Language = cultureName,
-                CartType = cartType,
-                BuyerId = buyerId,
-                OrganizationId = organizationId,
-            },
-            Pagination = new UcpPaginationRequest
-            {
-                Cursor = cursor,
-                Limit = limit,
-            },
-            Sort = sort,
-        };
-
-        return Ok(await _cartService.ListCartsAsync(request, cancellationToken));
+        return Ok(await _cartService.ListCartsAsync((query ?? new UcpCartListQuery()).ToRequest(), cancellationToken));
     }
 
     [HttpGet("{cartId}")]
@@ -99,5 +72,57 @@ public class UcpCartController : ControllerBase
     public async Task<ActionResult<UcpCartResponse>> UpdateCart(string cartId, [FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _cartService.UpdateCartAsync(cartId, request, cancellationToken));
+    }
+
+    public sealed class UcpCartListQuery
+    {
+        [FromQuery(Name = "store_id")]
+        public string StoreId { get; set; }
+
+        [FromQuery(Name = "currency")]
+        public string Currency { get; set; }
+
+        [FromQuery(Name = "culture_name")]
+        public string CultureName { get; set; }
+
+        [FromQuery(Name = "cart_type")]
+        public string CartType { get; set; }
+
+        [FromQuery(Name = "buyer_id")]
+        public string BuyerId { get; set; }
+
+        [FromQuery(Name = "organization_id")]
+        public string OrganizationId { get; set; }
+
+        [FromQuery(Name = "cursor")]
+        public string Cursor { get; set; }
+
+        [FromQuery(Name = "limit")]
+        public int? Limit { get; set; }
+
+        [FromQuery(Name = "sort")]
+        public string Sort { get; set; }
+
+        public UcpCartListRequest ToRequest()
+        {
+            return new UcpCartListRequest
+            {
+                Context = new UcpCartContext
+                {
+                    StoreId = StoreId,
+                    Currency = Currency,
+                    Language = CultureName,
+                    CartType = CartType,
+                    BuyerId = BuyerId,
+                    OrganizationId = OrganizationId,
+                },
+                Pagination = new UcpPaginationRequest
+                {
+                    Cursor = Cursor,
+                    Limit = Limit,
+                },
+                Sort = Sort,
+            };
+        }
     }
 }

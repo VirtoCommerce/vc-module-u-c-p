@@ -13,6 +13,8 @@ namespace Virtocommerce.UCP.Web.Services;
 
 public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
 {
+    private const int Iso2CountryCodeLength = 2;
+    private const int Iso3CountryCodeLength = 3;
     private const int DefaultLimit = 50;
     private const int MaxLimit = 250;
 
@@ -101,7 +103,7 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
             return null;
         }
 
-        if (normalizedQuery.Length is 2 or 3 && TryGetCountryByCode(normalizedQuery, out var country))
+        if (normalizedQuery.Length is Iso2CountryCodeLength or Iso3CountryCodeLength && TryGetCountryByCode(normalizedQuery, out var country))
         {
             return country;
         }

@@ -80,10 +80,31 @@ public class UcpProfileService : IUcpProfileService
         (ModuleConstants.McpTools.ListCarts, "GET", ModuleConstants.Endpoints.CartList, ModuleConstants.Capabilities.Cart, "available", "List recent buyer-scoped carts."),
         (ModuleConstants.McpTools.GetCart, "GET", ModuleConstants.Endpoints.CartGet, ModuleConstants.Capabilities.Cart, "available", "Read cart lines, totals, coupons, addresses, shipments, payments, and continue_url."),
         (ModuleConstants.McpTools.UpdateCart, "PUT", ModuleConstants.Endpoints.CartUpdate, ModuleConstants.Capabilities.Cart, "available", "Update cart items and coupons."),
-        (ModuleConstants.McpTools.CreateCheckout, "POST", ModuleConstants.Endpoints.CheckoutCreate, ModuleConstants.Capabilities.Checkout, "available", "Create checkout snapshot. Delivery addresses belong in structured shipping_address fields; country and region are normalized through platform dictionaries before XCart is updated."),
-        (ModuleConstants.McpTools.UpdateCheckout, "PATCH", ModuleConstants.Endpoints.CheckoutUpdate, ModuleConstants.Capabilities.Checkout, "available", "Update checkout address data before payment. A new handoff URL is required after shipping_address or billing_address changes."),
+        (
+            ModuleConstants.McpTools.CreateCheckout,
+            "POST",
+            ModuleConstants.Endpoints.CheckoutCreate,
+            ModuleConstants.Capabilities.Checkout,
+            "available",
+            "Create checkout snapshot. Delivery addresses belong in structured shipping_address fields; country and region are normalized through platform dictionaries before XCart is updated."
+        ),
+        (
+            ModuleConstants.McpTools.UpdateCheckout,
+            "PATCH",
+            ModuleConstants.Endpoints.CheckoutUpdate,
+            ModuleConstants.Capabilities.Checkout,
+            "available",
+            "Update checkout address data before payment. A new handoff URL is required after shipping_address or billing_address changes."
+        ),
         (ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "available", "Read supported payment handlers. hosted_checkout is the current available handler."),
-        (ModuleConstants.McpTools.HandoffCheckout, "POST", ModuleConstants.Endpoints.CheckoutHandoff, ModuleConstants.Capabilities.Checkout, "available", "Create hosted checkout handoff URL. For physical goods, shipping_address is expected before handoff; billing_address defaults to shipping_address when no separate billing address is provided."),
+        (
+            ModuleConstants.McpTools.HandoffCheckout,
+            "POST",
+            ModuleConstants.Endpoints.CheckoutHandoff,
+            ModuleConstants.Capabilities.Checkout,
+            "available",
+            "Create hosted checkout handoff URL. For physical goods, shipping_address is expected before handoff; billing_address defaults to shipping_address when no separate billing address is provided."
+        ),
         (ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrack, ModuleConstants.Capabilities.Order, "available", "Track an order by order id or number when the user provides one."),
         (ModuleConstants.McpTools.TrackOrder, "GET", ModuleConstants.Endpoints.OrderTrackByCart, ModuleConstants.Capabilities.Order, "available", "After hosted checkout, track the created order by the original cart_id."),
         (ModuleConstants.McpTools.ListCountries, "GET", ModuleConstants.Endpoints.GeographyCountries, ModuleConstants.Capabilities.Geography, "available", "List or search Virto Commerce platform countries before checkout country normalization."),

@@ -87,7 +87,7 @@ Module manifest объявляет runtime dependencies:
 | `VirtoCommerce.Xapi` | `3.1001.0` |
 | `VirtoCommerce.XCatalog` | `3.1000.0` |
 | `VirtoCommerce.XCart` | `3.1016.0` |
-| `VirtoCommerce.Store` | `3.1003.0` |
+| `VirtoCommerce.Store` | `3.1004.0` |
 | `VirtoCommerce.Orders` | `3.1000.0` |
 | `VirtoCommerce.Marketing` | `3.1000.0` |
 
