@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128"
+     role="img" aria-label="Universal Commerce Protocol">
+  <title>Universal Commerce Protocol</title>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="92%" y2="100%">
+      <stop offset="0%"   stop-color="#A66BFF"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <filter id="lift" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3.5" flood-color="#3A1473" flood-opacity="0.30"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <g filter="url(#lift)">
+    <rect x="22" y="22" width="84" height="84" rx="20" fill="#FFFFFF"/>
+    <g transform="translate(38,38) scale(1.733)">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M27 10L16 16.6658V30L27 23.3329V20.8325L18.1149 26.2495V17.9159L27 12.499V10Z" fill="black" stroke="black" stroke-width="0.2"/>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M4.30688 11.2488L2 10V23.3329L14 30V16.6658L11.6916 15.4156V26.2495L4.30688 22.0827V11.2488Z" fill="black" stroke="black" stroke-width="0.2"/>
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M15.1296 1L3 8L15 15L17.3859 13.6979L15 12.3563L25 6.65981L15.1296 1ZM12.7681 10.9978L7.59675 7.9732L15.1296 3.62535L20.3551 6.64148L12.7681 10.9992V10.9978Z" fill="black" stroke="black" stroke-width="0.2"/>
+    </g>
+  </g>
+</svg>

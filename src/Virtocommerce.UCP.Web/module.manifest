@@ -29,7 +29,7 @@
   </groups>
 
   <projectUrl>https://github.com/VirtoCommerce/vc-module-u-c-p</projectUrl>
-  <iconUrl>Modules/$(Virtocommerce.UCP)/Content/logo.png</iconUrl>
+  <iconUrl>Modules/$(Virtocommerce.UCP)/Content/logo.svg</iconUrl>
   <requireLicenseAcceptance>false</requireLicenseAcceptance>
 
   <assemblyFile>Virtocommerce.UCP.Web.dll</assemblyFile>
