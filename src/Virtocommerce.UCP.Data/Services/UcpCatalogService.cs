@@ -10,9 +10,9 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services.Execution;
+using Virtocommerce.UCP.Data.Models;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
 {
@@ -32,7 +32,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         _options = options.Value;
     }
 
-    public virtual async Task<UcpCatalogSearchResponse> SearchProductsAsync(UcpCatalogSearchRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCatalogSearchResponse> SearchProducts(UcpCatalogSearchRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCatalogSearchRequest();
         var catalogRequest = BuildCatalogExecutionRequest(request);
@@ -48,7 +48,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             ["first"] = catalogRequest.Limit,
         };
 
-        var result = await _xApiExecutor.ExecuteAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.Execute(new XApiExecutionRequest
         {
             Query = SearchProductsQuery,
             OperationName = "UcpSearchProducts",
@@ -81,7 +81,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         };
     }
 
-    public virtual async Task<UcpProductResponse> GetProductAsync(string productId, UcpCatalogSearchRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpProductResponse> GetProduct(string productId, UcpCatalogSearchRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(productId);
 
@@ -97,7 +97,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             ["cultureName"] = catalogRequest.CultureName,
         };
 
-        var result = await _xApiExecutor.ExecuteAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.Execute(new XApiExecutionRequest
         {
             Query = GetProductQuery,
             OperationName = "UcpGetProduct",

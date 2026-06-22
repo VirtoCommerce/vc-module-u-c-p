@@ -9,12 +9,12 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services.Execution;
+using Virtocommerce.UCP.Data.Models;
 using VirtoCommerce.OrdersModule.Core.Model;
 using VirtoCommerce.OrdersModule.Core.Model.Search;
 using VirtoCommerce.OrdersModule.Core.Services;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpOrderService : UcpServiceBase, IUcpOrderService
 {
@@ -37,7 +37,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         _options = options.Value;
     }
 
-    public virtual async Task<UcpOrderResponse> TrackOrderAsync(UcpOrderTrackingRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpOrderResponse> TrackOrder(UcpOrderTrackingRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpOrderTrackingRequest();
         var orderRequest = BuildOrderExecutionRequest(request);
@@ -45,11 +45,11 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         CustomerOrder orderModel;
         if (!string.IsNullOrWhiteSpace(orderRequest.CartId))
         {
-            orderModel = await FindOrderByCartIdAsync(orderRequest);
+            orderModel = await FindOrderByCartId(orderRequest);
         }
         else
         {
-            orderModel = await FindOrderByIdOrNumberAsync(orderRequest);
+            orderModel = await FindOrderByIdOrNumber(orderRequest);
         }
 
         if (orderModel == null)
@@ -86,7 +86,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         };
     }
 
-    private async Task<CustomerOrder> FindOrderByIdOrNumberAsync(OrderExecutionRequest request)
+    private async Task<CustomerOrder> FindOrderByIdOrNumber(OrderExecutionRequest request)
     {
         if (!string.IsNullOrWhiteSpace(request.OrderId))
         {
@@ -114,7 +114,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         return result.Results.FirstOrDefault();
     }
 
-    private async Task<CustomerOrder> FindOrderByCartIdAsync(OrderExecutionRequest request)
+    private async Task<CustomerOrder> FindOrderByCartId(OrderExecutionRequest request)
     {
         var criteria = new CustomerOrderSearchCriteria
         {
@@ -125,7 +125,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
             ResponseGroup = OrderResponseGroup,
         };
 
-        var order = await FindOrderByCartIdAsync(criteria, request.CartId);
+        var order = await FindOrderByCartId(criteria, request.CartId);
         if (order != null || string.IsNullOrWhiteSpace(request.UserId) && string.IsNullOrWhiteSpace(request.OrganizationId))
         {
             return order;
@@ -134,10 +134,10 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         criteria.CustomerId = null;
         criteria.OrganizationId = null;
 
-        return await FindOrderByCartIdAsync(criteria, request.CartId);
+        return await FindOrderByCartId(criteria, request.CartId);
     }
 
-    private async Task<CustomerOrder> FindOrderByCartIdAsync(CustomerOrderSearchCriteria criteria, string cartId)
+    private async Task<CustomerOrder> FindOrderByCartId(CustomerOrderSearchCriteria criteria, string cartId)
     {
         var result = await _customerOrderSearchService.SearchAsync(criteria, clone: false);
         return result.Results.FirstOrDefault(order => string.Equals(order.ShoppingCartId, cartId, StringComparison.OrdinalIgnoreCase));

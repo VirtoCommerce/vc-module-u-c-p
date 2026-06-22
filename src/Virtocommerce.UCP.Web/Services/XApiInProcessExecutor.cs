@@ -39,22 +39,22 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         _httpContextAccessor = httpContextAccessor;
     }
 
-    public virtual Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return ExecuteAsync(_catalogDocumentExecuter, request, cancellationToken);
+        return Execute(_catalogDocumentExecuter, request, cancellationToken);
     }
 
-    public virtual Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> ExecuteCart(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return ExecuteAsync(_cartDocumentExecuter, request, cancellationToken);
+        return Execute(_cartDocumentExecuter, request, cancellationToken);
     }
 
-    public virtual Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+    public virtual Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return ExecuteAsync(_orderDocumentExecuter, request, cancellationToken);
+        return Execute(_orderDocumentExecuter, request, cancellationToken);
     }
 
-    protected virtual Task<XApiExecutionResult> ExecuteAsync<TSchemaFactory>(
+    protected virtual Task<XApiExecutionResult> Execute<TSchemaFactory>(
         IDocumentExecuter<TSchemaFactory> documentExecuter,
         XApiExecutionRequest request,
         CancellationToken cancellationToken)
@@ -63,10 +63,10 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         ArgumentNullException.ThrowIfNull(request);
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Query);
 
-        return ExecuteCoreAsync(documentExecuter, request, cancellationToken);
+        return ExecuteCore(documentExecuter, request, cancellationToken);
     }
 
-    private async Task<XApiExecutionResult> ExecuteCoreAsync<TSchemaFactory>(
+    private async Task<XApiExecutionResult> ExecuteCore<TSchemaFactory>(
         IDocumentExecuter<TSchemaFactory> documentExecuter,
         XApiExecutionRequest request,
         CancellationToken cancellationToken)

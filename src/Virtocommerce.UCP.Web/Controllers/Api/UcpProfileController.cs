@@ -22,7 +22,7 @@ public class UcpProfileController : ControllerBase
     [ProducesResponseType(typeof(UcpProfile), StatusCodes.Status200OK)]
     public async Task<ActionResult<UcpProfile>> GetProfile(CancellationToken cancellationToken)
     {
-        var profile = await _ucpProfileService.GetProfileAsync(cancellationToken);
+        var profile = await _ucpProfileService.GetProfile(cancellationToken);
         return Ok(profile);
     }
 }

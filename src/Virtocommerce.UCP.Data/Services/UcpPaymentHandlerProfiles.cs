@@ -2,7 +2,7 @@ using System.Collections.Generic;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 internal static class UcpPaymentHandlerProfiles
 {

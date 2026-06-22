@@ -6,5 +6,5 @@ namespace Virtocommerce.UCP.Core.Services;
 
 public interface IUcpProfileService
 {
-    Task<UcpProfile> GetProfileAsync(CancellationToken cancellationToken = default);
+    Task<UcpProfile> GetProfile(CancellationToken cancellationToken = default);
 }

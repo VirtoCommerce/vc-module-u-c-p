@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Http;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using VirtoCommerce.Platform.Core.Common;
 using Xunit;
 
@@ -17,11 +17,11 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpGeographyServiceTests
 {
     [Fact]
-    public async Task ResolveCountryAsync_UsesPlatformCountryServiceForIso2()
+    public async Task ResolveCountry_UsesPlatformCountryServiceForIso2()
     {
         var service = CreateService();
 
-        var response = await service.ResolveCountryAsync("KZ", TestContext.Current.CancellationToken);
+        var response = await service.ResolveCountry("KZ", TestContext.Current.CancellationToken);
 
         Assert.Equal("success", response.Ucp.Status);
         Assert.Contains(ModuleConstants.Capabilities.Geography, response.Ucp.Capabilities.Keys);
@@ -31,33 +31,37 @@ public class UcpGeographyServiceTests
     }
 
     [Fact]
-    public async Task ListRegionsAsync_ReturnsPlatformRegionsForResolvedCountry()
+    public async Task ListRegions_ReturnsPlatformRegionsForResolvedCountry()
     {
         var service = CreateService();
 
-        var response = await service.ListRegionsAsync("KZ", TestContext.Current.CancellationToken);
+        var response = await service.ListRegions("KZ", TestContext.Current.CancellationToken);
 
         Assert.Equal("KAZ", response.Country.Id);
         Assert.Contains(response.Regions, x => x.Id == "ALA" && x.Name == "Алматы");
     }
 
     [Fact]
-    public async Task ListCountriesAsync_FiltersByPlatformCountryName()
+    public async Task ListCountries_FiltersByPlatformCountryName()
     {
         var service = CreateService();
 
-        var response = await service.ListCountriesAsync("kaz", 10, TestContext.Current.CancellationToken);
+        var response = await service.ListCountries(new UcpCountriesQuery
+        {
+            Query = "kaz",
+            Limit = 10,
+        }, TestContext.Current.CancellationToken);
 
         var country = Assert.Single(response.Countries);
         Assert.Equal("KAZ", country.Id);
     }
 
     [Fact]
-    public async Task ResolveCountryAsync_Returns404WhenUnknown()
+    public async Task ResolveCountry_Returns404WhenUnknown()
     {
         var service = CreateService();
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.ResolveCountryAsync("Neverland", TestContext.Current.CancellationToken));
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.ResolveCountry("Neverland", TestContext.Current.CancellationToken));
 
         Assert.Equal(StatusCodes.Status404NotFound, exception.StatusCode);
         Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Error.Code);

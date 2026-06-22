@@ -6,9 +6,9 @@ namespace Virtocommerce.UCP.Core.Services;
 
 public interface IUcpCartService
 {
-    Task<UcpCartResponse> CreateCartAsync(UcpCartRequest request, CancellationToken cancellationToken = default);
-    Task<UcpCartListResponse> ListCartsAsync(UcpCartListRequest request, CancellationToken cancellationToken = default);
-    Task<UcpCartResponse> GetCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default);
-    Task<UcpCartResponse> UpdateCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default);
-    Task<UcpCartResponse> ApplyCheckoutDataAsync(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCartResponse> CreateCart(UcpCartRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCartListResponse> ListCarts(UcpCartListRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCartResponse> GetCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCartResponse> UpdateCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCartResponse> ApplyCheckoutData(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default);
 }

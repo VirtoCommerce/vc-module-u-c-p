@@ -22,11 +22,10 @@ public class UcpGeographyController : ControllerBase
     [ProducesResponseType(typeof(UcpCountriesResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UcpCountriesResponse>> ListCountries(
-        [FromQuery(Name = "query")] string query,
-        [FromQuery(Name = "limit")] int? limit,
+        [FromQuery] UcpCountriesQuery query,
         CancellationToken cancellationToken)
     {
-        return Ok(await _geographyService.ListCountriesAsync(query, limit, cancellationToken));
+        return Ok(await _geographyService.ListCountries(query, cancellationToken));
     }
 
     [HttpGet("countries/resolve")]
@@ -37,7 +36,7 @@ public class UcpGeographyController : ControllerBase
         [FromQuery(Name = "query")] string query,
         CancellationToken cancellationToken)
     {
-        return Ok(await _geographyService.ResolveCountryAsync(query, cancellationToken));
+        return Ok(await _geographyService.ResolveCountry(query, cancellationToken));
     }
 
     [HttpGet("countries/{countryId}/regions")]
@@ -46,6 +45,6 @@ public class UcpGeographyController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
     public async Task<ActionResult<UcpRegionsResponse>> ListRegions(string countryId, CancellationToken cancellationToken)
     {
-        return Ok(await _geographyService.ListRegionsAsync(countryId, cancellationToken));
+        return Ok(await _geographyService.ListRegions(countryId, cancellationToken));
     }
 }

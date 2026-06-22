@@ -8,7 +8,7 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using VirtoCommerce.Platform.Core.Common;
 using Xunit;
 
@@ -18,12 +18,12 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpCartServiceTests
 {
     [Fact]
-    public async Task CreateCartAsync_AddsItemsAndCouponThroughXCart()
+    public async Task CreateCart_AddsItemsAndCouponThroughXCart()
     {
         var executor = new StubXApiExecutor(CartWithOneItemJson, CartWithTwoItemsJson, CartWithCouponJson);
         var service = CreateService(executor);
 
-        var response = await service.CreateCartAsync(new UcpCartRequest
+        var response = await service.CreateCart(new UcpCartRequest
         {
             Context = new UcpCartContext
             {
@@ -50,7 +50,7 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task CreateCartAsync_AcceptsTopLevelContextAliases()
+    public async Task CreateCart_AcceptsTopLevelContextAliases()
     {
         var executor = new StubXApiExecutor(CartWithOneItemJson);
         var service = CreateService(executor, options: new UcpOptions
@@ -59,7 +59,7 @@ public class UcpCartServiceTests
             DefaultCultureName = "en-US",
         });
 
-        await service.CreateCartAsync(new UcpCartRequest
+        await service.CreateCart(new UcpCartRequest
         {
             StoreId = "store-acme",
             Currency = "USD",
@@ -80,12 +80,12 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task ListCartsAsync_ReturnsBuyerScopedCarts()
+    public async Task ListCarts_ReturnsBuyerScopedCarts()
     {
         var executor = new StubXApiExecutor(CartsQueryJson);
         var service = CreateService(executor);
 
-        var response = await service.ListCartsAsync(new UcpCartListRequest
+        var response = await service.ListCarts(new UcpCartListRequest
         {
             Context = new UcpCartContext
             {
@@ -106,11 +106,11 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task ListCartsAsync_RequiresBuyerContext()
+    public async Task ListCarts_RequiresBuyerContext()
     {
         var service = CreateService(new StubXApiExecutor());
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.ListCartsAsync(new UcpCartListRequest
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.ListCarts(new UcpCartListRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD" },
         }, TestContext.Current.CancellationToken));
@@ -119,12 +119,12 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task UpdateCartAsync_ReplacesCartStateWithDiffMutations()
+    public async Task UpdateCart_ReplacesCartStateWithDiffMutations()
     {
         var executor = new StubXApiExecutor(CartQueryJson, CartItemRemovedJson, CartQuantityChangedJson, CartCouponRemovedJson);
         var service = CreateService(executor);
 
-        var response = await service.UpdateCartAsync("cart-1", new UcpCartRequest
+        var response = await service.UpdateCart("cart-1", new UcpCartRequest
         {
             Context = new UcpCartContext
             {
@@ -146,12 +146,12 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task UpdateCartAsync_AdoptsExistingCartOwnerWhenBuyerContextIsMissing()
+    public async Task UpdateCart_AdoptsExistingCartOwnerWhenBuyerContextIsMissing()
     {
         var executor = new StubXApiExecutor(CartOwnedByGeneratedBuyerJson, CartQuantityChangedForGeneratedBuyerJson);
         var service = CreateService(executor);
 
-        await service.UpdateCartAsync("cart-1", new UcpCartRequest
+        await service.UpdateCart("cart-1", new UcpCartRequest
         {
             Context = new UcpCartContext
             {
@@ -174,11 +174,11 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task GetCartAsync_ReturnsStructuredNotFound()
+    public async Task GetCart_ReturnsStructuredNotFound()
     {
         var service = CreateService(new StubXApiExecutor("""{"data":{"cart":null}}"""));
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetCartAsync("missing", new UcpCartRequest
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetCart("missing", new UcpCartRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD" },
         }, TestContext.Current.CancellationToken));
@@ -188,12 +188,12 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task GetCartAsync_DoesNotInjectAnonymousFallbackWhenBuyerContextIsMissing()
+    public async Task GetCart_DoesNotInjectAnonymousFallbackWhenBuyerContextIsMissing()
     {
         var executor = new StubXApiExecutor(CartOwnedByGeneratedBuyerJson);
         var service = CreateService(executor);
 
-        var response = await service.GetCartAsync("cart-1", new UcpCartRequest
+        var response = await service.GetCart("cart-1", new UcpCartRequest
         {
             Context = new UcpCartContext
             {
@@ -210,7 +210,7 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task ApplyCheckoutDataAsync_AppliesShippingAndBillingAddresses()
+    public async Task ApplyCheckoutData_AppliesShippingAndBillingAddresses()
     {
         var executor = new StubXApiExecutor(
             CartQueryJson,
@@ -220,7 +220,7 @@ public class UcpCartServiceTests
             CartWithPaymentAddressJson);
         var service = CreateService(executor);
 
-        var response = await service.ApplyCheckoutDataAsync("cart-1", new UcpCheckoutRequest
+        var response = await service.ApplyCheckoutData("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext
             {
@@ -297,9 +297,9 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task ApplyCheckoutDataAsync_RequiresRecipientFirstAndLastName()
+    public async Task ApplyCheckoutData_RequiresRecipientFirstAndLastName()
     {
-        var shippingException = await Assert.ThrowsAsync<UcpException>(() => CreateService(new StubXApiExecutor(CartQueryJson)).ApplyCheckoutDataAsync("cart-1", new UcpCheckoutRequest
+        var shippingException = await Assert.ThrowsAsync<UcpException>(() => CreateService(new StubXApiExecutor(CartQueryJson)).ApplyCheckoutData("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext
             {
@@ -316,7 +316,7 @@ public class UcpCartServiceTests
             },
         }, TestContext.Current.CancellationToken));
 
-        var billingException = await Assert.ThrowsAsync<UcpException>(() => CreateService(new StubXApiExecutor(CartQueryJson)).ApplyCheckoutDataAsync("cart-1", new UcpCheckoutRequest
+        var billingException = await Assert.ThrowsAsync<UcpException>(() => CreateService(new StubXApiExecutor(CartQueryJson)).ApplyCheckoutData("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext
             {
@@ -344,7 +344,7 @@ public class UcpCartServiceTests
     }
 
     [Fact]
-    public async Task ApplyCheckoutDataAsync_NormalizesCountryAndRegionWithPlatformCountries()
+    public async Task ApplyCheckoutData_NormalizesCountryAndRegionWithPlatformCountries()
     {
         var executor = new StubXApiExecutor(
             CartQueryJson,
@@ -363,7 +363,7 @@ public class UcpCartServiceTests
             },
         ]));
 
-        await service.ApplyCheckoutDataAsync("cart-1", new UcpCheckoutRequest
+        await service.ApplyCheckoutData("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext
             {
@@ -426,12 +426,12 @@ public class UcpCartServiceTests
 
         public List<string> OperationNames { get; } = [];
 
-        public Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
-            return ExecuteCartAsync(request, cancellationToken);
+            return ExecuteCart(request, cancellationToken);
         }
 
-        public Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> ExecuteCart(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
             Requests.Add(request);
             OperationNames.Add(request.OperationName);
@@ -443,9 +443,9 @@ public class UcpCartServiceTests
             });
         }
 
-        public Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
-            return ExecuteCartAsync(request, cancellationToken);
+            return ExecuteCart(request, cancellationToken);
         }
     }
 

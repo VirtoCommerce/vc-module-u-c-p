@@ -6,9 +6,9 @@ namespace Virtocommerce.UCP.Core.Services;
 
 public interface IUcpGeographyService
 {
-    Task<UcpCountriesResponse> ListCountriesAsync(string query = null, int? limit = null, CancellationToken cancellationToken = default);
+    Task<UcpCountriesResponse> ListCountries(UcpCountriesQuery query, CancellationToken cancellationToken = default);
 
-    Task<UcpCountryResponse> ResolveCountryAsync(string query, CancellationToken cancellationToken = default);
+    Task<UcpCountryResponse> ResolveCountry(string query, CancellationToken cancellationToken = default);
 
-    Task<UcpRegionsResponse> ListRegionsAsync(string countryId, CancellationToken cancellationToken = default);
+    Task<UcpRegionsResponse> ListRegions(string countryId, CancellationToken cancellationToken = default);
 }

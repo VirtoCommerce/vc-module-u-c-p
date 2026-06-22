@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Models;
 
 namespace Virtocommerce.UCP.Web.Controllers.Api;
 
@@ -24,7 +25,7 @@ public class UcpCartController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> CreateCart([FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await _cartService.CreateCartAsync(request, cancellationToken));
+        return Ok(await _cartService.CreateCart(request, cancellationToken));
     }
 
     [HttpGet]
@@ -35,7 +36,7 @@ public class UcpCartController : ControllerBase
         [FromQuery] UcpCartListQuery query,
         CancellationToken cancellationToken)
     {
-        return Ok(await _cartService.ListCartsAsync((query ?? new UcpCartListQuery()).ToRequest(), cancellationToken));
+        return Ok(await _cartService.ListCarts((query ?? new UcpCartListQuery()).ToRequest(), cancellationToken));
     }
 
     [HttpGet("{cartId}")]
@@ -45,22 +46,10 @@ public class UcpCartController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> GetCart(
         string cartId,
-        [FromQuery(Name = "store_id")] string storeId,
-        [FromQuery(Name = "currency")] string currency,
-        [FromQuery(Name = "culture_name")] string cultureName,
+        [FromQuery] UcpCartQuery query,
         CancellationToken cancellationToken)
     {
-        var request = new UcpCartRequest
-        {
-            Context = new UcpCartContext
-            {
-                StoreId = storeId,
-                Currency = currency,
-                Language = cultureName,
-            },
-        };
-
-        return Ok(await _cartService.GetCartAsync(cartId, request, cancellationToken));
+        return Ok(await _cartService.GetCart(cartId, (query ?? new UcpCartQuery()).ToRequest(), cancellationToken));
     }
 
     [HttpPut("{cartId}")]
@@ -71,58 +60,6 @@ public class UcpCartController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> UpdateCart(string cartId, [FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await _cartService.UpdateCartAsync(cartId, request, cancellationToken));
-    }
-
-    public sealed class UcpCartListQuery
-    {
-        [FromQuery(Name = "store_id")]
-        public string StoreId { get; set; }
-
-        [FromQuery(Name = "currency")]
-        public string Currency { get; set; }
-
-        [FromQuery(Name = "culture_name")]
-        public string CultureName { get; set; }
-
-        [FromQuery(Name = "cart_type")]
-        public string CartType { get; set; }
-
-        [FromQuery(Name = "buyer_id")]
-        public string BuyerId { get; set; }
-
-        [FromQuery(Name = "organization_id")]
-        public string OrganizationId { get; set; }
-
-        [FromQuery(Name = "cursor")]
-        public string Cursor { get; set; }
-
-        [FromQuery(Name = "limit")]
-        public int? Limit { get; set; }
-
-        [FromQuery(Name = "sort")]
-        public string Sort { get; set; }
-
-        public UcpCartListRequest ToRequest()
-        {
-            return new UcpCartListRequest
-            {
-                Context = new UcpCartContext
-                {
-                    StoreId = StoreId,
-                    Currency = Currency,
-                    Language = CultureName,
-                    CartType = CartType,
-                    BuyerId = BuyerId,
-                    OrganizationId = OrganizationId,
-                },
-                Pagination = new UcpPaginationRequest
-                {
-                    Cursor = Cursor,
-                    Limit = Limit,
-                },
-                Sort = Sort,
-            };
-        }
+        return Ok(await _cartService.UpdateCart(cartId, request, cancellationToken));
     }
 }

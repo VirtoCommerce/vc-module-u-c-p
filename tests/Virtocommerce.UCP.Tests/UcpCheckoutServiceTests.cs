@@ -2,14 +2,14 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using Xunit;
 
 namespace Virtocommerce.UCP.Tests;
@@ -18,11 +18,11 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpCheckoutServiceTests
 {
     [Fact]
-    public async Task CreateCheckoutAsync_ReturnsCheckoutSnapshotFromCart()
+    public async Task CreateCheckout_ReturnsCheckoutSnapshotFromCart()
     {
         var service = CreateService(new StubCartService(CreateCart()));
 
-        var response = await service.CreateCheckoutAsync(new UcpCheckoutRequest
+        var response = await service.CreateCheckout(new UcpCheckoutRequest
         {
             CartId = "cart-1",
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
@@ -37,12 +37,12 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task HandoffCheckoutAsync_ReturnsContinueUrlAndRestoreReadsToken()
+    public async Task HandoffCheckout_ReturnsContinueUrlAndRestoreReadsToken()
     {
         var cart = CreateCart();
         var service = CreateService(new StubCartService(cart));
 
-        var handoff = await service.HandoffCheckoutAsync("cart-1", new UcpCheckoutRequest
+        var handoff = await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
             Buyer = new UcpCheckoutBuyer { Email = "buyer@example.com" },
@@ -53,7 +53,7 @@ public class UcpCheckoutServiceTests
         Assert.Contains(handoff.Messages, x => x.Code == "shipping_required");
 
         var token = handoff.Checkout.ContinueUrl.Split("ucp_session=").Last();
-        var restore = await service.RestoreHandoffAsync(new UcpHandoffRestoreRequest
+        var restore = await service.RestoreHandoff(new UcpHandoffRestoreRequest
         {
             UcpSession = System.Uri.UnescapeDataString(token),
         }, TestContext.Current.CancellationToken);
@@ -64,12 +64,12 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task HandoffCheckoutAsync_AppliesAddressBeforeCreatingToken()
+    public async Task HandoffCheckout_AppliesAddressBeforeCreatingToken()
     {
         var cartService = new StubCartService(CreateCart());
         var service = CreateService(cartService);
 
-        await service.HandoffCheckoutAsync("cart-1", new UcpCheckoutRequest
+        await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
             ShippingAddress = new UcpCheckoutAddress
@@ -89,12 +89,12 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task HandoffCheckoutAsync_AcceptsTopLevelContextAliases()
+    public async Task HandoffCheckout_AcceptsTopLevelContextAliases()
     {
         var cartService = new StubCartService(CreateCart());
         var service = CreateService(cartService);
 
-        await service.HandoffCheckoutAsync("cart-1", new UcpCheckoutRequest
+        await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
         {
             StoreId = "store-acme",
             Currency = "USD",
@@ -120,12 +120,12 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task UpdateCheckoutAsync_AppliesAddressAndReturnsCheckoutUpdatedMessage()
+    public async Task UpdateCheckout_AppliesAddressAndReturnsCheckoutUpdatedMessage()
     {
         var cartService = new StubCartService(CreateCart());
         var service = CreateService(cartService);
 
-        var response = await service.UpdateCheckoutAsync("cart-1", new UcpCheckoutRequest
+        var response = await service.UpdateCheckout("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
             ShippingAddress = new UcpCheckoutAddress
@@ -146,7 +146,7 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task CreateCheckoutAsync_UsesAddressFromCartSnapshot()
+    public async Task CreateCheckout_UsesAddressFromCartSnapshot()
     {
         var cart = CreateCart();
         cart.Addresses.Add(new UcpCartAddress
@@ -162,7 +162,7 @@ public class UcpCheckoutServiceTests
         });
         var service = CreateService(new StubCartService(cart));
 
-        var response = await service.CreateCheckoutAsync(new UcpCheckoutRequest
+        var response = await service.CreateCheckout(new UcpCheckoutRequest
         {
             CartId = "cart-1",
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
@@ -173,7 +173,7 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task CreateCheckoutAsync_WarnsWhenShippingPostalCodeIsMissing()
+    public async Task CreateCheckout_WarnsWhenShippingPostalCodeIsMissing()
     {
         var cart = CreateCart();
         cart.Addresses.Add(new UcpCartAddress
@@ -188,7 +188,7 @@ public class UcpCheckoutServiceTests
         });
         var service = CreateService(new StubCartService(cart));
 
-        var response = await service.CreateCheckoutAsync(new UcpCheckoutRequest
+        var response = await service.CreateCheckout(new UcpCheckoutRequest
         {
             CartId = "cart-1",
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
@@ -198,11 +198,11 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task HandoffCheckoutAsync_WarnsWhenAddressWasPutIntoNotes()
+    public async Task HandoffCheckout_WarnsWhenAddressWasPutIntoNotes()
     {
         var service = CreateService(new StubCartService(CreateCart()));
 
-        var response = await service.HandoffCheckoutAsync("cart-1", new UcpCheckoutRequest
+        var response = await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
             Notes = "United States, Seattle, 1 Main St Apt 100",
@@ -222,7 +222,7 @@ public class UcpCheckoutServiceTests
 
         return new UcpCheckoutService(
             cartService,
-            new EphemeralDataProtectionProvider(),
+            new StubDistributedCache(),
             httpContextAccessor,
             Options.Create(new UcpOptions
             {
@@ -267,32 +267,78 @@ public class UcpCheckoutServiceTests
             _cart = cart;
         }
 
-        public Task<UcpCartResponse> CreateCartAsync(UcpCartRequest request, CancellationToken cancellationToken = default)
+        public Task<UcpCartResponse> CreateCart(UcpCartRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new UcpCartResponse { Cart = _cart });
         }
 
-        public Task<UcpCartListResponse> ListCartsAsync(UcpCartListRequest request, CancellationToken cancellationToken = default)
+        public Task<UcpCartListResponse> ListCarts(UcpCartListRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new UcpCartListResponse { Carts = { _cart } });
         }
 
-        public Task<UcpCartResponse> GetCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
+        public Task<UcpCartResponse> GetCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new UcpCartResponse { Cart = _cart });
         }
 
-        public Task<UcpCartResponse> UpdateCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
+        public Task<UcpCartResponse> UpdateCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
         {
             return Task.FromResult(new UcpCartResponse { Cart = _cart });
         }
 
         public List<(string cartId, UcpCheckoutRequest request)> AppliedCheckoutRequests { get; } = [];
 
-        public Task<UcpCartResponse> ApplyCheckoutDataAsync(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+        public Task<UcpCartResponse> ApplyCheckoutData(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
         {
             AppliedCheckoutRequests.Add((cartId, request));
             return Task.FromResult(new UcpCartResponse { Cart = _cart });
+        }
+    }
+
+    private sealed class StubDistributedCache : IDistributedCache
+    {
+        private readonly Dictionary<string, byte[]> _items = [];
+
+        public byte[] Get(string key)
+        {
+            return _items.GetValueOrDefault(key);
+        }
+
+        public Task<byte[]> GetAsync(string key, CancellationToken token = default)
+        {
+            return Task.FromResult(Get(key));
+        }
+
+        public void Refresh(string key)
+        {
+        }
+
+        public Task RefreshAsync(string key, CancellationToken token = default)
+        {
+            return Task.CompletedTask;
+        }
+
+        public void Remove(string key)
+        {
+            _items.Remove(key);
+        }
+
+        public Task RemoveAsync(string key, CancellationToken token = default)
+        {
+            Remove(key);
+            return Task.CompletedTask;
+        }
+
+        public void Set(string key, byte[] value, DistributedCacheEntryOptions options)
+        {
+            _items[key] = value;
+        }
+
+        public Task SetAsync(string key, byte[] value, DistributedCacheEntryOptions options, CancellationToken token = default)
+        {
+            Set(key, value, options);
+            return Task.CompletedTask;
         }
     }
 }

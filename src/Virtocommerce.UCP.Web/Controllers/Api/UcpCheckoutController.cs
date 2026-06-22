@@ -24,7 +24,7 @@ public class UcpCheckoutController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCheckoutResponse>> CreateCheckout([FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await _checkoutService.CreateCheckoutAsync(request, cancellationToken));
+        return Ok(await _checkoutService.CreateCheckout(request, cancellationToken));
     }
 
     [HttpPatch("{checkoutId}")]
@@ -33,7 +33,7 @@ public class UcpCheckoutController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCheckoutResponse>> UpdateCheckout(string checkoutId, [FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await _checkoutService.UpdateCheckoutAsync(checkoutId, request, cancellationToken));
+        return Ok(await _checkoutService.UpdateCheckout(checkoutId, request, cancellationToken));
     }
 
     [HttpGet("{checkoutId}/payment-handlers")]
@@ -41,7 +41,7 @@ public class UcpCheckoutController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UcpPaymentHandlersResponse>> GetPaymentHandlers(string checkoutId, CancellationToken cancellationToken)
     {
-        return Ok(await _checkoutService.GetPaymentHandlersAsync(checkoutId, cancellationToken));
+        return Ok(await _checkoutService.GetPaymentHandlers(checkoutId, cancellationToken));
     }
 
     [HttpPost("{checkoutId}/handoff")]
@@ -50,6 +50,6 @@ public class UcpCheckoutController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCheckoutHandoffResponse>> HandoffCheckout(string checkoutId, [FromBody] UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
-        return Ok(await _checkoutService.HandoffCheckoutAsync(checkoutId, request, cancellationToken));
+        return Ok(await _checkoutService.HandoffCheckout(checkoutId, request, cancellationToken));
     }
 }

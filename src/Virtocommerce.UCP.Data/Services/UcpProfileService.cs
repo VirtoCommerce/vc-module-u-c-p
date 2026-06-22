@@ -13,7 +13,7 @@ using VirtoCommerce.StoreModule.Core.Model;
 using VirtoCommerce.StoreModule.Core.Model.Search;
 using VirtoCommerce.StoreModule.Core.Services;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpProfileService : IUcpProfileService
 {
@@ -132,10 +132,10 @@ public class UcpProfileService : IUcpProfileService
         _storeSearchService = storeSearchService;
     }
 
-    public virtual async Task<UcpProfile> GetProfileAsync(CancellationToken cancellationToken = default)
+    public virtual async Task<UcpProfile> GetProfile(CancellationToken cancellationToken = default)
     {
         var request = _httpContextAccessor.HttpContext?.Request;
-        var storeProfiles = await GetStoreProfilesAsync();
+        var storeProfiles = await GetStoreProfiles();
         var storeProfile = storeProfiles.FirstOrDefault(x => x.IsDefault);
         var origin = GetConfiguredStorefrontOrigin(storeProfile) ?? GetRequestOrigin(request);
 
@@ -247,15 +247,15 @@ public class UcpProfileService : IUcpProfileService
         }
     }
 
-    protected virtual async Task<IList<UcpStoreProfile>> GetStoreProfilesAsync()
+    protected virtual async Task<IList<UcpStoreProfile>> GetStoreProfiles()
     {
-        var configuredStore = await GetConfiguredDefaultStoreAsync();
+        var configuredStore = await GetConfiguredDefaultStore();
         if (HasConfiguredDefaultStore(configuredStore))
         {
             return CreateConfiguredStoreProfiles(configuredStore);
         }
 
-        return await GetDiscoveredStoreProfilesAsync();
+        return await GetDiscoveredStoreProfiles();
     }
 
     protected virtual bool HasConfiguredDefaultStore(Store configuredStore)
@@ -273,9 +273,9 @@ public class UcpProfileService : IUcpProfileService
             : new List<UcpStoreProfile> { configuredProfile };
     }
 
-    protected virtual async Task<IList<UcpStoreProfile>> GetDiscoveredStoreProfilesAsync()
+    protected virtual async Task<IList<UcpStoreProfile>> GetDiscoveredStoreProfiles()
     {
-        var stores = await SearchOpenStoresAsync();
+        var stores = await SearchOpenStores();
 
         return stores
             .Select(store => CreateStoreProfile(store, isDefault: stores.Count == 1, source: "store_search"))
@@ -283,7 +283,7 @@ public class UcpProfileService : IUcpProfileService
             .ToList();
     }
 
-    protected virtual async Task<Store> GetConfiguredDefaultStoreAsync()
+    protected virtual async Task<Store> GetConfiguredDefaultStore()
     {
         if (_storeService == null || string.IsNullOrWhiteSpace(_options.DefaultStoreId))
         {
@@ -293,7 +293,7 @@ public class UcpProfileService : IUcpProfileService
         return await _storeService.GetNoCloneAsync(_options.DefaultStoreId);
     }
 
-    protected virtual async Task<IList<Store>> SearchOpenStoresAsync()
+    protected virtual async Task<IList<Store>> SearchOpenStores()
     {
         if (_storeSearchService == null)
         {

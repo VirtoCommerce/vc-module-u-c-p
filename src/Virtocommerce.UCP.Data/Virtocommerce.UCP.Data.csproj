@@ -4,7 +4,10 @@
     <SonarQubeTestProject>false</SonarQubeTestProject>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="VirtoCommerce.Platform.Data" Version="3.1000.0" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="VirtoCommerce.OrdersModule.Core" Version="3.1000.0" />
+    <PackageReference Include="VirtoCommerce.Platform.Core" Version="3.1034.0" />
+    <PackageReference Include="VirtoCommerce.StoreModule.Core" Version="3.1004.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Virtocommerce.UCP.Core\Virtocommerce.UCP.Core.csproj" />

@@ -8,7 +8,7 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public abstract class UcpServiceBase
 {

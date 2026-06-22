@@ -8,7 +8,7 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using VirtoCommerce.OrdersModule.Core.Model;
 using VirtoCommerce.OrdersModule.Core.Model.Search;
 using VirtoCommerce.OrdersModule.Core.Services;
@@ -20,13 +20,13 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpOrderServiceTests
 {
     [Fact]
-    public async Task TrackOrderAsync_ByCartId_FindsOrderByShoppingCartIdWithoutXOrderSession()
+    public async Task TrackOrder_ByCartId_FindsOrderByShoppingCartIdWithoutXOrderSession()
     {
         var order = CreateOrder("order-1", "cart-1", "buyer-1");
         var orderSearchService = new StubCustomerOrderSearchService(order);
         var service = CreateService(orderSearchService: orderSearchService);
 
-        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        var response = await service.TrackOrder(new UcpOrderTrackingRequest
         {
             CartId = "cart-1",
             Context = new UcpCartContext
@@ -60,12 +60,12 @@ public class UcpOrderServiceTests
     }
 
     [Fact]
-    public async Task TrackOrderAsync_ByCartId_ReturnsStructuredNotFound()
+    public async Task TrackOrder_ByCartId_ReturnsStructuredNotFound()
     {
         var orderSearchService = new StubCustomerOrderSearchService(CreateOrder("order-1", "another-cart", "buyer-1"));
         var service = CreateService(orderSearchService: orderSearchService);
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrderAsync(new UcpOrderTrackingRequest
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrder(new UcpOrderTrackingRequest
         {
             CartId = "missing-cart",
             Context = new UcpCartContext { BuyerId = "buyer-1" },
@@ -76,13 +76,13 @@ public class UcpOrderServiceTests
     }
 
     [Fact]
-    public async Task TrackOrderAsync_ByCartId_FallsBackToShoppingCartIdWhenGuestBuyerChanged()
+    public async Task TrackOrder_ByCartId_FallsBackToShoppingCartIdWhenGuestBuyerChanged()
     {
         var order = CreateOrder("order-1", "cart-1", "storefront-guest");
         var orderSearchService = new StubCustomerOrderSearchService(order);
         var service = CreateService(orderSearchService: orderSearchService);
 
-        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        var response = await service.TrackOrder(new UcpOrderTrackingRequest
         {
             CartId = "cart-1",
             Context = new UcpCartContext { BuyerId = "ucp-anonymous-original" },
@@ -95,12 +95,12 @@ public class UcpOrderServiceTests
     }
 
     [Fact]
-    public async Task TrackOrderAsync_ByOrderId_UsesOrdersService()
+    public async Task TrackOrder_ByOrderId_UsesOrdersService()
     {
         var orderService = new StubCustomerOrderService(CreateOrder("order-1", "cart-1", "buyer-1"));
         var service = CreateService(orderService: orderService);
 
-        var response = await service.TrackOrderAsync(new UcpOrderTrackingRequest
+        var response = await service.TrackOrder(new UcpOrderTrackingRequest
         {
             OrderId = "order-1",
             Context = new UcpCartContext { BuyerId = "buyer-1" },

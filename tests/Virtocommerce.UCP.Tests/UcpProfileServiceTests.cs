@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Options;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using VirtoCommerce.StoreModule.Core.Model;
 using Xunit;
 
@@ -15,7 +15,7 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpProfileServiceTests
 {
     [Fact]
-    public async Task GetProfileAsync_ReturnsDiscoveryContract()
+    public async Task GetProfile_ReturnsDiscoveryContract()
     {
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -28,7 +28,7 @@ public class UcpProfileServiceTests
             Options.Create(new UcpOptions()),
             httpContextAccessor);
 
-        var profile = await service.GetProfileAsync(TestContext.Current.CancellationToken);
+        var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
         Assert.Equal(ModuleConstants.UcpVersion, profile.UcpVersion);
         Assert.Equal(ModuleConstants.Platform, profile.Platform);
@@ -74,7 +74,7 @@ public class UcpProfileServiceTests
     }
 
     [Fact]
-    public async Task GetProfileAsync_UsesConfiguredStorefrontOrigin()
+    public async Task GetProfile_UsesConfiguredStorefrontOrigin()
     {
         var service = new UcpProfileService(
             Options.Create(new UcpOptions
@@ -84,7 +84,7 @@ public class UcpProfileServiceTests
             }),
             new HttpContextAccessor());
 
-        var profile = await service.GetProfileAsync(TestContext.Current.CancellationToken);
+        var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
         Assert.Equal("https://storefront.example", profile.StorefrontOrigin);
         Assert.Equal("https://api.example/ucp/v1", profile.Endpoints.UcpBaseUrl);
@@ -92,7 +92,7 @@ public class UcpProfileServiceTests
     }
 
     [Fact]
-    public async Task GetProfileAsync_ExposesDefaultStoreFromStoreService()
+    public async Task GetProfile_ExposesDefaultStoreFromStoreService()
     {
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -119,7 +119,7 @@ public class UcpProfileServiceTests
                 DefaultLanguage = "en-US",
             });
 
-        var profile = await service.GetProfileAsync(TestContext.Current.CancellationToken);
+        var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
         Assert.Equal("store-acme", profile.DefaultStoreId);
         Assert.NotNull(profile.Store);
@@ -135,7 +135,7 @@ public class UcpProfileServiceTests
     }
 
     [Fact]
-    public async Task GetProfileAsync_AutodiscoversSingleOpenStoreAsDefault()
+    public async Task GetProfile_AutodiscoversSingleOpenStoreAsDefault()
     {
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -164,7 +164,7 @@ public class UcpProfileServiceTests
                 },
             });
 
-        var profile = await service.GetProfileAsync(TestContext.Current.CancellationToken);
+        var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
         Assert.Equal("store-acme", profile.DefaultStoreId);
         Assert.NotNull(profile.Store);
@@ -177,7 +177,7 @@ public class UcpProfileServiceTests
     }
 
     [Fact]
-    public async Task GetProfileAsync_ReturnsStoreCandidatesWithoutDefaultWhenMultipleStoresExist()
+    public async Task GetProfile_ReturnsStoreCandidatesWithoutDefaultWhenMultipleStoresExist()
     {
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -205,7 +205,7 @@ public class UcpProfileServiceTests
                 },
             });
 
-        var profile = await service.GetProfileAsync(TestContext.Current.CancellationToken);
+        var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
         Assert.Null(profile.DefaultStoreId);
         Assert.Null(profile.Store);
@@ -228,12 +228,12 @@ public class UcpProfileServiceTests
             _stores = stores?.ToList() ?? new List<Store>();
         }
 
-        protected override Task<Store> GetConfiguredDefaultStoreAsync()
+        protected override Task<Store> GetConfiguredDefaultStore()
         {
             return Task.FromResult(_store);
         }
 
-        protected override Task<IList<Store>> SearchOpenStoresAsync()
+        protected override Task<IList<Store>> SearchOpenStores()
         {
             return Task.FromResult<IList<Store>>(_stores);
         }

@@ -1,25 +1,18 @@
 using GraphQL.MicrosoftDI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Data.MySql;
-using Virtocommerce.UCP.Data.PostgreSql;
-using Virtocommerce.UCP.Data.Repositories;
-using Virtocommerce.UCP.Data.SqlServer;
+using Virtocommerce.UCP.Data.Services;
 using Virtocommerce.UCP.ExperienceApi;
 using Virtocommerce.UCP.Web.Filters;
 using Virtocommerce.UCP.Web.Services;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
 using VirtoCommerce.Platform.Core.Settings;
-using VirtoCommerce.Platform.Data.MySql.Extensions;
-using VirtoCommerce.Platform.Data.PostgreSql.Extensions;
-using VirtoCommerce.Platform.Data.SqlServer.Extensions;
 using VirtoCommerce.Xapi.Core.Extensions;
 using VirtoCommerce.Xapi.Core.Infrastructure;
 
@@ -32,26 +25,8 @@ public class Module : IModule, IHasConfiguration
 
     public void Initialize(IServiceCollection serviceCollection)
     {
-        serviceCollection.AddDbContext<UCPDbContext>(options =>
-        {
-            var databaseProvider = Configuration.GetValue("DatabaseProvider", "SqlServer");
-            var connectionString = Configuration.GetConnectionString(ModuleInfo.Id) ?? Configuration.GetConnectionString("VirtoCommerce");
-
-            switch (databaseProvider)
-            {
-                case "MySql":
-                    options.UseMySqlDatabase(connectionString, typeof(MySqlDataAssemblyMarker), Configuration);
-                    break;
-                case "PostgreSql":
-                    options.UsePostgreSqlDatabase(connectionString, typeof(PostgreSqlDataAssemblyMarker), Configuration);
-                    break;
-                default:
-                    options.UseSqlServerDatabase(connectionString, typeof(SqlServerDataAssemblyMarker), Configuration);
-                    break;
-            }
-        });
-
         serviceCollection.AddHttpContextAccessor();
+        serviceCollection.AddDistributedMemoryCache();
         serviceCollection.Configure<UcpOptions>(Configuration.GetSection("UCP"));
         serviceCollection.Configure<MvcOptions>(options =>
         {
@@ -85,10 +60,6 @@ public class Module : IModule, IHasConfiguration
         permissionsRegistrar.RegisterPermissions(ModuleInfo.Id, "UCP", ModuleConstants.Security.Permissions.AllPermissions);
 
         appBuilder.UseScopedSchema<XapiAssemblyMarker>("ucp");
-
-        using var serviceScope = serviceProvider.CreateScope();
-        using var dbContext = serviceScope.ServiceProvider.GetRequiredService<UCPDbContext>();
-        dbContext.Database.Migrate();
     }
 
     public void Uninstall()

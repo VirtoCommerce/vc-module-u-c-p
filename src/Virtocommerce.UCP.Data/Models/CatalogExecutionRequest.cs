@@ -1,4 +1,4 @@
-namespace Virtocommerce.UCP.Web.Services.Execution;
+namespace Virtocommerce.UCP.Data.Models;
 
 internal sealed class CatalogExecutionRequest
 {

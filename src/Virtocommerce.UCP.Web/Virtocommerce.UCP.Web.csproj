@@ -21,9 +21,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Virtocommerce.UCP.Core\Virtocommerce.UCP.Core.csproj" />
     <ProjectReference Include="..\Virtocommerce.UCP.Data\Virtocommerce.UCP.Data.csproj" />
-    <ProjectReference Include="..\Virtocommerce.UCP.Data.MySql\Virtocommerce.UCP.Data.MySql.csproj" />
-    <ProjectReference Include="..\Virtocommerce.UCP.Data.PostgreSql\Virtocommerce.UCP.Data.PostgreSql.csproj" />
-    <ProjectReference Include="..\Virtocommerce.UCP.Data.SqlServer\Virtocommerce.UCP.Data.SqlServer.csproj" />
     <ProjectReference Include="..\Virtocommerce.UCP.ExperienceApi\Virtocommerce.UCP.ExperienceApi.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -32,8 +29,6 @@
     <PackageReference Include="VirtoCommerce.XCart.Core" Version="3.1016.0" />
     <PackageReference Include="VirtoCommerce.XCart.Data" Version="3.1016.0" />
     <PackageReference Include="VirtoCommerce.XOrder.Data" Version="3.1000.0" />
-    <PackageReference Include="VirtoCommerce.OrdersModule.Core" Version="3.1000.0" />
-    <PackageReference Include="VirtoCommerce.StoreModule.Core" Version="3.1004.0" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="module.manifest" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

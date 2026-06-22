@@ -10,10 +10,10 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services.Execution;
+using Virtocommerce.UCP.Data.Models;
 using VirtoCommerce.Platform.Core.Common;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpCartService : UcpServiceBase, IUcpCartService
 {
@@ -42,7 +42,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         _options = options.Value;
     }
 
-    public virtual async Task<UcpCartResponse> CreateCartAsync(UcpCartRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCartResponse> CreateCart(UcpCartRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCartRequest();
         var cartRequest = BuildCartExecutionRequest(request, generateAnonymousBuyer: true);
@@ -54,7 +54,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         var firstLineItem = request.LineItems[0];
         ValidateLineItemForAdd(firstLineItem);
-        var cartElement = await ExecuteCartMutationAsync(
+        var cartElement = await ExecuteCartMutation(
             "addItem",
             "UcpAddCartItem",
             cartRequest,
@@ -64,7 +64,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         foreach (var lineItem in request.LineItems.Skip(1))
         {
             ValidateLineItemForAdd(lineItem);
-            cartElement = await ExecuteCartMutationAsync("addItem", "UcpAddCartItem", cartRequest, BuildAddItemCommand(cartRequest, null, lineItem), cancellationToken);
+            cartElement = await ExecuteCartMutation("addItem", "UcpAddCartItem", cartRequest, BuildAddItemCommand(cartRequest, null, lineItem), cancellationToken);
         }
 
         if (request.Coupons.Count > 0)
@@ -72,14 +72,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             cartRequest.CartId = ReadString(cartElement, "id");
             foreach (var coupon in NormalizeCoupons(request.Coupons))
             {
-                cartElement = await ExecuteCartMutationAsync("addCoupon", "UcpAddCartCoupon", cartRequest, BuildCouponCommand(cartRequest, coupon), cancellationToken);
+                cartElement = await ExecuteCartMutation("addCoupon", "UcpAddCartCoupon", cartRequest, BuildCouponCommand(cartRequest, coupon), cancellationToken);
             }
         }
 
         return CreateResponse(cartElement);
     }
 
-    public virtual async Task<UcpCartListResponse> ListCartsAsync(UcpCartListRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCartListResponse> ListCarts(UcpCartListRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCartListRequest();
         var cartRequest = BuildCartExecutionRequest(new UcpCartRequest { Context = request.Context }, allowAnonymousFallback: false);
@@ -101,7 +101,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             ["sort"] = request.Sort,
         };
 
-        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCart(new XApiExecutionRequest
         {
             Query = ListCartsQuery,
             OperationName = "UcpListCarts",
@@ -126,7 +126,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         };
     }
 
-    public virtual async Task<UcpCartResponse> GetCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCartResponse> GetCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
 
@@ -134,7 +134,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         var cartRequest = BuildCartExecutionRequest(request, allowAnonymousFallback: false);
         cartRequest.CartId = cartId;
 
-        var cartElement = await ExecuteGetCartAsync(cartRequest, cancellationToken);
+        var cartElement = await ExecuteGetCart(cartRequest, cancellationToken);
         if (cartElement.ValueKind == JsonValueKind.Null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.CartNotFound, $"Cart '{cartId}' was not found.", StatusCodes.Status404NotFound);
@@ -143,7 +143,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return CreateResponse(cartElement);
     }
 
-    public virtual async Task<UcpCartResponse> UpdateCartAsync(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCartResponse> UpdateCart(string cartId, UcpCartRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
 
@@ -151,7 +151,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         var cartRequest = BuildCartExecutionRequest(request, allowAnonymousFallback: false);
         cartRequest.CartId = cartId;
 
-        var currentCart = await ExecuteGetCartAsync(cartRequest, cancellationToken);
+        var currentCart = await ExecuteGetCart(cartRequest, cancellationToken);
         if (currentCart.ValueKind == JsonValueKind.Null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.CartNotFound, $"Cart '{cartId}' was not found.", StatusCodes.Status404NotFound);
@@ -162,14 +162,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         var desiredItems = request.LineItems ?? [];
         var currentItems = ReadCartLineItems(currentCart);
-        var cartElement = await RemoveMissingItemsAsync(currentCart, cartRequest, currentItems, desiredItems, cancellationToken);
-        cartElement = await ApplyDesiredItemsAsync(cartId, cartElement, cartRequest, currentItems, desiredItems, cancellationToken);
-        cartElement = await ApplyCouponsAsync(cartElement, cartRequest, currentCart, request.Coupons, cancellationToken);
+        var cartElement = await RemoveMissingItems(currentCart, cartRequest, currentItems, desiredItems, cancellationToken);
+        cartElement = await ApplyDesiredItems(cartId, cartElement, cartRequest, currentItems, desiredItems, cancellationToken);
+        cartElement = await ApplyCoupons(cartElement, cartRequest, currentCart, request.Coupons, cancellationToken);
 
         return CreateResponse(cartElement);
     }
 
-    public virtual async Task<UcpCartResponse> ApplyCheckoutDataAsync(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCartResponse> ApplyCheckoutData(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(cartId);
 
@@ -177,7 +177,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         var cartRequest = BuildCartExecutionRequest(new UcpCartRequest { Context = request.Context }, allowAnonymousFallback: false);
         cartRequest.CartId = cartId;
 
-        var cartElement = await ExecuteGetCartAsync(cartRequest, cancellationToken);
+        var cartElement = await ExecuteGetCart(cartRequest, cancellationToken);
         if (cartElement.ValueKind == JsonValueKind.Null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.CartNotFound, $"Cart '{cartId}' was not found.", StatusCodes.Status404NotFound);
@@ -186,21 +186,21 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(cartElement, "customerId"));
         cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(cartElement, "organizationId"));
 
-        var shippingAddress = await PrepareAddressAsync(request.ShippingAddress, request.Buyer, cancellationToken);
-        var billingAddress = await PrepareAddressAsync(request.BillingAddress, request.Buyer, cancellationToken);
+        var shippingAddress = await PrepareAddress(request.ShippingAddress, request.Buyer, cancellationToken);
+        var billingAddress = await PrepareAddress(request.BillingAddress, request.Buyer, cancellationToken);
 
         if (shippingAddress != null)
         {
             ValidateRecipientName(shippingAddress, "shipping_address");
 
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateShippingAddress",
                 cartRequest,
                 BuildAddressCommand(cartRequest, shippingAddress, ShippingAddressType),
                 cancellationToken);
 
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartShipment",
                 "UcpAddOrUpdateShipmentAddress",
                 cartRequest,
@@ -212,14 +212,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateRecipientName(billingAddress, "billing_address");
 
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateBillingAddress",
                 cartRequest,
                 BuildAddressCommand(cartRequest, billingAddress, BillingAddressType),
                 cancellationToken);
 
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartPayment",
                 "UcpAddOrUpdatePaymentAddress",
                 cartRequest,
@@ -323,7 +323,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         }
     }
 
-    private async Task<JsonElement> RemoveMissingItemsAsync(
+    private async Task<JsonElement> RemoveMissingItems(
         JsonElement cartElement,
         CartExecutionRequest cartRequest,
         IList<UcpCartLineItem> currentItems,
@@ -332,7 +332,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
     {
         foreach (var currentItem in currentItems.Where(current => !HasDesiredMatch(current, desiredItems)))
         {
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "removeCartItem",
                 "UcpRemoveCartItem",
                 cartRequest,
@@ -343,7 +343,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return cartElement;
     }
 
-    private async Task<JsonElement> ApplyDesiredItemsAsync(
+    private async Task<JsonElement> ApplyDesiredItems(
         string cartId,
         JsonElement cartElement,
         CartExecutionRequest cartRequest,
@@ -353,13 +353,13 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
     {
         foreach (var desiredItem in desiredItems)
         {
-            cartElement = await ApplyDesiredItemAsync(cartId, cartElement, cartRequest, currentItems, desiredItem, cancellationToken);
+            cartElement = await ApplyDesiredItem(cartId, cartElement, cartRequest, currentItems, desiredItem, cancellationToken);
         }
 
         return cartElement;
     }
 
-    private async Task<JsonElement> ApplyDesiredItemAsync(
+    private async Task<JsonElement> ApplyDesiredItem(
         string cartId,
         JsonElement cartElement,
         CartExecutionRequest cartRequest,
@@ -372,7 +372,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateLineItemForAdd(desiredItem);
 
-            return await ExecuteCartMutationAsync(
+            return await ExecuteCartMutation(
                 "addItem",
                 "UcpAddCartItem",
                 cartRequest,
@@ -380,7 +380,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
                 cancellationToken);
         }
 
-        return await ApplyMatchedLineItemAsync(cartElement, cartRequest, currentItem, desiredItem.Quantity, cancellationToken);
+        return await ApplyMatchedLineItem(cartElement, cartRequest, currentItem, desiredItem.Quantity, cancellationToken);
     }
 
     private UcpCartLineItem FindCurrentItem(string cartId, IEnumerable<UcpCartLineItem> currentItems, UcpCartLineItemRequest desiredItem)
@@ -399,7 +399,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return currentItems.FirstOrDefault(item => string.Equals(item.ProductId, desiredItem.ProductId, StringComparison.OrdinalIgnoreCase));
     }
 
-    private async Task<JsonElement> ApplyMatchedLineItemAsync(
+    private async Task<JsonElement> ApplyMatchedLineItem(
         JsonElement cartElement,
         CartExecutionRequest cartRequest,
         UcpCartLineItem currentItem,
@@ -408,7 +408,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
     {
         if (desiredQuantity <= 0)
         {
-            return await ExecuteCartMutationAsync(
+            return await ExecuteCartMutation(
                 "removeCartItem",
                 "UcpRemoveCartItem",
                 cartRequest,
@@ -421,7 +421,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             return cartElement;
         }
 
-        return await ExecuteCartMutationAsync(
+        return await ExecuteCartMutation(
             "changeCartItemQuantity",
             "UcpChangeCartItemQuantity",
             cartRequest,
@@ -429,7 +429,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             cancellationToken);
     }
 
-    private async Task<JsonElement> ApplyCouponsAsync(
+    private async Task<JsonElement> ApplyCoupons(
         JsonElement cartElement,
         CartExecutionRequest cartRequest,
         JsonElement currentCart,
@@ -444,7 +444,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         foreach (var coupon in currentCoupons.Where(coupon => !desiredCoupons.Contains(coupon)))
         {
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "removeCoupon",
                 "UcpRemoveCartCoupon",
                 cartRequest,
@@ -454,7 +454,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         foreach (var coupon in desiredCoupons.Where(coupon => !currentCoupons.Contains(coupon)))
         {
-            cartElement = await ExecuteCartMutationAsync(
+            cartElement = await ExecuteCartMutation(
                 "addCoupon",
                 "UcpAddCartCoupon",
                 cartRequest,
@@ -465,7 +465,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return cartElement;
     }
 
-    private async Task<JsonElement> ExecuteGetCartAsync(CartExecutionRequest cartRequest, CancellationToken cancellationToken)
+    private async Task<JsonElement> ExecuteGetCart(CartExecutionRequest cartRequest, CancellationToken cancellationToken)
     {
         var variables = new Dictionary<string, object>
         {
@@ -478,7 +478,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             ["cartType"] = cartRequest.CartType,
         };
 
-        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCart(new XApiExecutionRequest
         {
             Query = GetCartQuery,
             OperationName = "UcpGetCart",
@@ -490,9 +490,9 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return document.RootElement.GetProperty("data").GetProperty("cart").Clone();
     }
 
-    private async Task<JsonElement> ExecuteCartMutationAsync(string mutationName, string operationName, CartExecutionRequest cartRequest, IDictionary<string, object> command, CancellationToken cancellationToken)
+    private async Task<JsonElement> ExecuteCartMutation(string mutationName, string operationName, CartExecutionRequest cartRequest, IDictionary<string, object> command, CancellationToken cancellationToken)
     {
-        var result = await _xApiExecutor.ExecuteCartAsync(new XApiExecutionRequest
+        var result = await _xApiExecutor.ExecuteCart(new XApiExecutionRequest
         {
             Query = BuildCartMutation(mutationName, operationName),
             OperationName = operationName,
@@ -601,7 +601,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return result;
     }
 
-    protected virtual async Task<UcpCheckoutAddress> PrepareAddressAsync(UcpCheckoutAddress address, UcpCheckoutBuyer buyer, CancellationToken cancellationToken)
+    protected virtual async Task<UcpCheckoutAddress> PrepareAddress(UcpCheckoutAddress address, UcpCheckoutBuyer buyer, CancellationToken cancellationToken)
     {
         if (address == null)
         {
@@ -610,19 +610,19 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         var result = CloneAddress(address);
         ApplyBuyerContact(result, buyer);
-        await NormalizeCountryAndRegionAsync(result, cancellationToken);
+        await NormalizeCountryAndRegion(result, cancellationToken);
 
         return result;
     }
 
-    protected virtual async Task NormalizeCountryAndRegionAsync(UcpCheckoutAddress address, CancellationToken cancellationToken)
+    protected virtual async Task NormalizeCountryAndRegion(UcpCheckoutAddress address, CancellationToken cancellationToken)
     {
         if (_countriesService == null || address == null)
         {
             return;
         }
 
-        var country = await ResolveCountryAsync(address, cancellationToken);
+        var country = await ResolveCountry(address, cancellationToken);
         if (country == null)
         {
             return;
@@ -631,10 +631,10 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         address.CountryCode = country.Id;
         address.CountryName = country.Name;
 
-        await NormalizeRegionAsync(address, country.Id, cancellationToken);
+        await NormalizeRegion(address, country.Id, cancellationToken);
     }
 
-    protected virtual async Task<Country> ResolveCountryAsync(UcpCheckoutAddress address, CancellationToken cancellationToken)
+    protected virtual async Task<Country> ResolveCountry(UcpCheckoutAddress address, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(address.CountryCode))
         {
@@ -644,14 +644,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             }
             catch (ArgumentException)
             {
-                return await ResolveCountryByNameAsync(address.CountryName, cancellationToken);
+                return await ResolveCountryByName(address.CountryName, cancellationToken);
             }
         }
 
-        return await ResolveCountryByNameAsync(address.CountryName, cancellationToken);
+        return await ResolveCountryByName(address.CountryName, cancellationToken);
     }
 
-    protected virtual async Task<Country> ResolveCountryByNameAsync(string countryName, CancellationToken cancellationToken)
+    protected virtual async Task<Country> ResolveCountryByName(string countryName, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(countryName))
         {
@@ -664,7 +664,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         return countries.FirstOrDefault(country => string.Equals(country.Name, countryName, StringComparison.OrdinalIgnoreCase));
     }
 
-    protected virtual async Task NormalizeRegionAsync(UcpCheckoutAddress address, string countryId, CancellationToken cancellationToken)
+    protected virtual async Task NormalizeRegion(UcpCheckoutAddress address, string countryId, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(countryId) || string.IsNullOrWhiteSpace(FirstNotEmpty(address.RegionId, address.Region)))
         {

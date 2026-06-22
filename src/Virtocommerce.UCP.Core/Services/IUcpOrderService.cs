@@ -6,5 +6,5 @@ namespace Virtocommerce.UCP.Core.Services;
 
 public interface IUcpOrderService
 {
-    Task<UcpOrderResponse> TrackOrderAsync(UcpOrderTrackingRequest request, CancellationToken cancellationToken = default);
+    Task<UcpOrderResponse> TrackOrder(UcpOrderTrackingRequest request, CancellationToken cancellationToken = default);
 }

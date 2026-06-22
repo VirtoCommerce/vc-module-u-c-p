@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Models;
 
 namespace Virtocommerce.UCP.Web.Controllers.Api;
 
@@ -24,24 +25,10 @@ public class UcpOrderController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpOrderResponse>> TrackOrderByCart(
-        [FromQuery(Name = "cart_id")] string cartId,
-        [FromQuery(Name = "buyer_id")] string buyerId,
-        [FromQuery(Name = "organization_id")] string organizationId,
-        [FromQuery(Name = "culture_name")] string cultureName,
+        [FromQuery] UcpOrderTrackingQuery query,
         CancellationToken cancellationToken)
     {
-        var request = new UcpOrderTrackingRequest
-        {
-            CartId = cartId,
-            Context = new UcpCartContext
-            {
-                BuyerId = buyerId,
-                OrganizationId = organizationId,
-                Language = cultureName,
-            },
-        };
-
-        return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
+        return Ok(await _orderService.TrackOrder((query ?? new UcpOrderTrackingQuery()).ToRequest(), cancellationToken));
     }
 
     [HttpGet("{orderId}")]
@@ -51,22 +38,12 @@ public class UcpOrderController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpOrderResponse>> TrackOrder(
         string orderId,
-        [FromQuery(Name = "buyer_id")] string buyerId,
-        [FromQuery(Name = "organization_id")] string organizationId,
-        [FromQuery(Name = "culture_name")] string cultureName,
+        [FromQuery] UcpOrderTrackingQuery query,
         CancellationToken cancellationToken)
     {
-        var request = new UcpOrderTrackingRequest
-        {
-            OrderId = orderId,
-            Context = new UcpCartContext
-            {
-                BuyerId = buyerId,
-                OrganizationId = organizationId,
-                Language = cultureName,
-            },
-        };
+        var request = (query ?? new UcpOrderTrackingQuery()).ToRequest();
+        request.OrderId = orderId;
 
-        return Ok(await _orderService.TrackOrderAsync(request, cancellationToken));
+        return Ok(await _orderService.TrackOrder(request, cancellationToken));
     }
 }

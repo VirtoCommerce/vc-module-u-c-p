@@ -1,7 +1,7 @@
 using System;
 using Virtocommerce.UCP.Core.Models;
 
-namespace Virtocommerce.UCP.Web.Services.Handoff;
+namespace Virtocommerce.UCP.Data.Models;
 
 internal sealed class CheckoutHandoffTokenPayload
 {

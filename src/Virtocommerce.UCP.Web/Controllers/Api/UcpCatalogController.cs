@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
+using Virtocommerce.UCP.Web.Models;
 
 namespace Virtocommerce.UCP.Web.Controllers.Api;
 
@@ -26,7 +27,7 @@ public class UcpCatalogController : ControllerBase
         [FromBody] UcpCatalogSearchRequest request,
         CancellationToken cancellationToken)
     {
-        return Ok(await _catalogService.SearchProductsAsync(request, cancellationToken));
+        return Ok(await _catalogService.SearchProducts(request, cancellationToken));
     }
 
     [HttpGet("products/{id}")]
@@ -36,21 +37,9 @@ public class UcpCatalogController : ControllerBase
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpProductResponse>> GetProduct(
         string id,
-        [FromQuery(Name = "store_id")] string storeId,
-        [FromQuery(Name = "currency")] string currency,
-        [FromQuery(Name = "culture_name")] string cultureName,
+        [FromQuery] UcpCatalogProductQuery query,
         CancellationToken cancellationToken)
     {
-        var request = new UcpCatalogSearchRequest
-        {
-            Context = new UcpCatalogContext
-            {
-                StoreId = storeId,
-                Currency = currency,
-                Language = cultureName,
-            },
-        };
-
-        return Ok(await _catalogService.GetProductAsync(id, request, cancellationToken));
+        return Ok(await _catalogService.GetProduct(id, (query ?? new UcpCatalogProductQuery()).ToRequest(), cancellationToken));
     }
 }

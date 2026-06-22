@@ -6,6 +6,6 @@ namespace Virtocommerce.UCP.Core.Services;
 
 public interface IUcpCatalogService
 {
-    Task<UcpCatalogSearchResponse> SearchProductsAsync(UcpCatalogSearchRequest request, CancellationToken cancellationToken = default);
-    Task<UcpProductResponse> GetProductAsync(string productId, UcpCatalogSearchRequest request, CancellationToken cancellationToken = default);
+    Task<UcpCatalogSearchResponse> SearchProducts(UcpCatalogSearchRequest request, CancellationToken cancellationToken = default);
+    Task<UcpProductResponse> GetProduct(string productId, UcpCatalogSearchRequest request, CancellationToken cancellationToken = default);
 }

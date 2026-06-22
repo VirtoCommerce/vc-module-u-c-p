@@ -6,21 +6,23 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services.Handoff;
+using Virtocommerce.UCP.Data.Models;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.StoreModule.Core.Services;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
 {
+    private const int HandoffSessionTokenBytes = 32;
+    private const string HandoffSessionCacheKeyPrefix = "UCP:Handoff:";
     private const string StatusIncomplete = "incomplete";
     private const string StatusRequiresEscalation = "requires_escalation";
     private const string CheckoutCapability = "dev.ucp.shopping.checkout";
@@ -33,29 +35,29 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
     };
 
     private readonly IUcpCartService _cartService;
-    private readonly IDataProtector _dataProtector;
+    private readonly IDistributedCache _distributedCache;
     private readonly IStoreService _storeService;
     private readonly UcpOptions _options;
 
     public UcpCheckoutService(
         IUcpCartService cartService,
-        IDataProtectionProvider dataProtectionProvider,
+        IDistributedCache distributedCache,
         IHttpContextAccessor httpContextAccessor,
         IOptions<UcpOptions> options,
         IStoreService storeService = null)
         : base(httpContextAccessor)
     {
         _cartService = cartService;
-        _dataProtector = dataProtectionProvider.CreateProtector("Virtocommerce.UCP.CheckoutHandoff.v1");
+        _distributedCache = distributedCache;
         _options = options.Value;
         _storeService = storeService;
     }
 
-    public virtual async Task<UcpCheckoutResponse> CreateCheckoutAsync(UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCheckoutResponse> CreateCheckout(UcpCheckoutRequest request, CancellationToken cancellationToken = default)
     {
         request ??= new UcpCheckoutRequest();
         NormalizeCheckoutContext(request);
-        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
+        var cart = await PrepareCartForCheckout(request, cancellationToken);
         var checkout = CreateCheckout(request, cart, StatusIncomplete);
 
         checkout.Messages.Add(new UcpMessage
@@ -75,7 +77,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         };
     }
 
-    public virtual async Task<UcpCheckoutResponse> UpdateCheckoutAsync(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCheckoutResponse> UpdateCheckout(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(checkoutId);
 
@@ -83,7 +85,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         request.CartId = FirstNotEmpty(request.CartId, checkoutId);
         NormalizeCheckoutContext(request);
 
-        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
+        var cart = await PrepareCartForCheckout(request, cancellationToken);
         var checkout = CreateCheckout(request, cart, StatusIncomplete);
 
         checkout.Messages.Add(new UcpMessage
@@ -103,7 +105,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         };
     }
 
-    public virtual Task<UcpPaymentHandlersResponse> GetPaymentHandlersAsync(string checkoutId, CancellationToken cancellationToken = default)
+    public virtual Task<UcpPaymentHandlersResponse> GetPaymentHandlers(string checkoutId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(checkoutId);
 
@@ -115,7 +117,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         });
     }
 
-    public virtual async Task<UcpCheckoutHandoffResponse> HandoffCheckoutAsync(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCheckoutHandoffResponse> HandoffCheckout(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(checkoutId);
 
@@ -123,11 +125,12 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         request.CartId = FirstNotEmpty(request.CartId, checkoutId);
         NormalizeCheckoutContext(request);
 
-        var cart = await PrepareCartForCheckoutAsync(request, cancellationToken);
+        var cart = await PrepareCartForCheckout(request, cancellationToken);
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _options.HandoffTokenTtlMinutes));
         var checkout = CreateCheckout(request, cart, StatusRequiresEscalation);
         checkout.ExpiresAt = expiresAt;
-        checkout.ContinueUrl = await BuildContinueUrlAsync(CreateHandoffToken(checkout, request.Context, expiresAt), checkout.Cart.StoreId);
+        var sessionToken = await StoreHandoffPayload(checkout, request.Context, expiresAt, cancellationToken);
+        checkout.ContinueUrl = await BuildContinueUrl(sessionToken, checkout.Cart.StoreId);
         checkout.Messages.Add(new UcpMessage
         {
             Type = "info",
@@ -145,7 +148,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         };
     }
 
-    public virtual async Task<UcpHandoffRestoreResponse> RestoreHandoffAsync(UcpHandoffRestoreRequest request, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpHandoffRestoreResponse> RestoreHandoff(UcpHandoffRestoreRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request?.UcpSession))
         {
@@ -155,9 +158,12 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         CheckoutHandoffTokenPayload payload;
         try
         {
-            payload = JsonSerializer.Deserialize<CheckoutHandoffTokenPayload>(_dataProtector.Unprotect(request.UcpSession), JsonOptions);
+            var payloadJson = await _distributedCache.GetStringAsync(GetHandoffSessionCacheKey(request.UcpSession), cancellationToken);
+            payload = string.IsNullOrWhiteSpace(payloadJson)
+                ? null
+                : JsonSerializer.Deserialize<CheckoutHandoffTokenPayload>(payloadJson, JsonOptions);
         }
-        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException or CryptographicException)
+        catch (JsonException)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "ucp_session is invalid or expired.");
         }
@@ -176,7 +182,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
             OrganizationId = payload.OrganizationId,
         };
 
-        var cart = await GetCartForCheckoutAsync(payload.CartId, context, cancellationToken);
+        var cart = await GetCartForCheckout(payload.CartId, context, cancellationToken);
         var checkout = new UcpCheckout
         {
             Id = payload.CheckoutId,
@@ -199,14 +205,14 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         };
     }
 
-    protected virtual async Task<UcpCart> GetCartForCheckoutAsync(string cartId, UcpCartContext context, CancellationToken cancellationToken)
+    protected virtual async Task<UcpCart> GetCartForCheckout(string cartId, UcpCartContext context, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(cartId))
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "cart_id is required.");
         }
 
-        var response = await _cartService.GetCartAsync(cartId, new UcpCartRequest { Context = context }, cancellationToken);
+        var response = await _cartService.GetCart(cartId, new UcpCartRequest { Context = context }, cancellationToken);
         if (response.Cart.LineItems.Count == 0)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "Checkout requires a non-empty cart.");
@@ -215,7 +221,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         return response.Cart;
     }
 
-    protected virtual async Task<UcpCart> PrepareCartForCheckoutAsync(UcpCheckoutRequest request, CancellationToken cancellationToken)
+    protected virtual async Task<UcpCart> PrepareCartForCheckout(UcpCheckoutRequest request, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(request.CartId))
         {
@@ -223,8 +229,8 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         }
 
         var response = request.ShippingAddress != null || request.BillingAddress != null
-            ? await _cartService.ApplyCheckoutDataAsync(request.CartId, request, cancellationToken)
-            : await _cartService.GetCartAsync(request.CartId, new UcpCartRequest { Context = request.Context }, cancellationToken);
+            ? await _cartService.ApplyCheckoutData(request.CartId, request, cancellationToken)
+            : await _cartService.GetCart(request.CartId, new UcpCartRequest { Context = request.Context }, cancellationToken);
 
         if (response.Cart.LineItems.Count == 0)
         {
@@ -362,8 +368,9 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         };
     }
 
-    protected virtual string CreateHandoffToken(UcpCheckout checkout, UcpCartContext context, DateTimeOffset expiresAt)
+    protected virtual async Task<string> StoreHandoffPayload(UcpCheckout checkout, UcpCartContext context, DateTimeOffset expiresAt, CancellationToken cancellationToken)
     {
+        var sessionToken = GenerateSessionToken();
         var payload = new CheckoutHandoffTokenPayload
         {
             CheckoutId = checkout.Id,
@@ -381,17 +388,40 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
             ExpiresAt = expiresAt,
         };
 
-        return _dataProtector.Protect(JsonSerializer.Serialize(payload, JsonOptions));
+        await _distributedCache.SetStringAsync(
+            GetHandoffSessionCacheKey(sessionToken),
+            JsonSerializer.Serialize(payload, JsonOptions),
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpiration = expiresAt,
+            },
+            cancellationToken);
+
+        return sessionToken;
     }
 
-    protected virtual async Task<string> BuildContinueUrlAsync(string token, string storeId)
+    protected virtual string GenerateSessionToken()
     {
-        var storefrontOrigin = await GetStorefrontOriginAsync(storeId);
+        var bytes = RandomNumberGenerator.GetBytes(HandoffSessionTokenBytes);
+        return Convert.ToBase64String(bytes)
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    protected virtual string GetHandoffSessionCacheKey(string sessionToken)
+    {
+        return HandoffSessionCacheKeyPrefix + sessionToken;
+    }
+
+    protected virtual async Task<string> BuildContinueUrl(string token, string storeId)
+    {
+        var storefrontOrigin = await GetStorefrontOrigin(storeId);
         var template = FirstNotEmpty(_options.HandoffUrlTemplate, $"{storefrontOrigin?.TrimEnd('/')}/checkout?ucp_session={{token}}");
         return template.Replace("{token}", Uri.EscapeDataString(token), StringComparison.Ordinal);
     }
 
-    protected virtual async Task<string> GetStorefrontOriginAsync(string storeId)
+    protected virtual async Task<string> GetStorefrontOrigin(string storeId)
     {
         if (_storeService != null && !string.IsNullOrWhiteSpace(storeId))
         {

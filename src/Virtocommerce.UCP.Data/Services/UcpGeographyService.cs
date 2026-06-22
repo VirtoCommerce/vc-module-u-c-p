@@ -9,7 +9,7 @@ using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Services;
 using VirtoCommerce.Platform.Core.Common;
 
-namespace Virtocommerce.UCP.Web.Services;
+namespace Virtocommerce.UCP.Data.Services;
 
 public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
 {
@@ -25,23 +25,25 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
         _countriesService = countriesService;
     }
 
-    public virtual async Task<UcpCountriesResponse> ListCountriesAsync(string query = null, int? limit = null, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCountriesResponse> ListCountries(UcpCountriesQuery query, CancellationToken cancellationToken = default)
     {
+        query ??= new UcpCountriesQuery();
+
         var countries = await _countriesService.GetCountriesAsync();
         cancellationToken.ThrowIfCancellationRequested();
 
-        var normalizedQuery = query?.Trim();
+        var normalizedQuery = query.Query?.Trim();
         var result = string.IsNullOrWhiteSpace(normalizedQuery)
             ? countries
             : countries.Where(country =>
                 Contains(country.Id, normalizedQuery) ||
                 Contains(country.Name, normalizedQuery));
 
-        var take = Math.Clamp(limit.GetValueOrDefault(DefaultLimit), 1, MaxLimit);
+        var take = Math.Clamp(query.Limit.GetValueOrDefault(DefaultLimit), 1, MaxLimit);
         var mapped = new List<UcpCountry>();
         foreach (var country in result.OrderBy(x => x.Name).Take(take))
         {
-            mapped.Add(await MapCountryAsync(country, cancellationToken));
+            mapped.Add(await MapCountry(country, cancellationToken));
         }
 
         return new UcpCountriesResponse
@@ -51,14 +53,14 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
         };
     }
 
-    public virtual async Task<UcpCountryResponse> ResolveCountryAsync(string query, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpCountryResponse> ResolveCountry(string query, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(query))
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "query is required.");
         }
 
-        var country = await ResolveCountryModelAsync(query, cancellationToken);
+        var country = await ResolveCountryModel(query, cancellationToken);
         if (country == null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, $"Country '{query}' was not found.", StatusCodes.Status404NotFound);
@@ -67,18 +69,18 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
         return new UcpCountryResponse
         {
             Ucp = CreateMetadata("success", ModuleConstants.Capabilities.Geography),
-            Country = await MapCountryAsync(country, cancellationToken),
+            Country = await MapCountry(country, cancellationToken),
         };
     }
 
-    public virtual async Task<UcpRegionsResponse> ListRegionsAsync(string countryId, CancellationToken cancellationToken = default)
+    public virtual async Task<UcpRegionsResponse> ListRegions(string countryId, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(countryId))
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "country_id is required.");
         }
 
-        var country = await ResolveCountryModelAsync(countryId, cancellationToken);
+        var country = await ResolveCountryModel(countryId, cancellationToken);
         if (country == null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, $"Country '{countryId}' was not found.", StatusCodes.Status404NotFound);
@@ -90,12 +92,12 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
         return new UcpRegionsResponse
         {
             Ucp = CreateMetadata("success", ModuleConstants.Capabilities.Geography),
-            Country = await MapCountryAsync(country, cancellationToken),
+            Country = await MapCountry(country, cancellationToken),
             Regions = regions.OrderBy(x => x.Name).Select(MapRegion).ToList(),
         };
     }
 
-    protected virtual async Task<Country> ResolveCountryModelAsync(string query, CancellationToken cancellationToken)
+    protected virtual async Task<Country> ResolveCountryModel(string query, CancellationToken cancellationToken)
     {
         var normalizedQuery = query?.Trim();
         if (string.IsNullOrWhiteSpace(normalizedQuery))
@@ -115,7 +117,7 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
             ?? countries.FirstOrDefault(country => string.Equals(country.Id, normalizedQuery, StringComparison.OrdinalIgnoreCase));
     }
 
-    protected virtual async Task<UcpCountry> MapCountryAsync(Country country, CancellationToken cancellationToken)
+    protected virtual async Task<UcpCountry> MapCountry(Country country, CancellationToken cancellationToken)
     {
         var regions = await _countriesService.GetCountryRegionsAsync(country.Id);
         cancellationToken.ThrowIfCancellationRequested();

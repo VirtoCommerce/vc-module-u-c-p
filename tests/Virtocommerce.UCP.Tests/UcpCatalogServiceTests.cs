@@ -9,7 +9,7 @@ using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Models;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
-using Virtocommerce.UCP.Web.Services;
+using Virtocommerce.UCP.Data.Services;
 using Xunit;
 
 namespace Virtocommerce.UCP.Tests;
@@ -18,7 +18,7 @@ namespace Virtocommerce.UCP.Tests;
 public class UcpCatalogServiceTests
 {
     [Fact]
-    public async Task SearchProductsAsync_MapsXCatalogProductsAndBuyerContext()
+    public async Task SearchProducts_MapsXCatalogProductsAndBuyerContext()
     {
         var executor = new StubXApiExecutor(SearchResponseJson);
         var httpContextAccessor = new HttpContextAccessor
@@ -39,7 +39,7 @@ public class UcpCatalogServiceTests
                 DefaultCultureName = "en-US",
             }));
 
-        var response = await service.SearchProductsAsync(new UcpCatalogSearchRequest
+        var response = await service.SearchProducts(new UcpCatalogSearchRequest
         {
             Query = "waterproof running jacket",
             Context = new UcpCatalogContext
@@ -72,21 +72,21 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
-    public async Task SearchProductsAsync_RequiresStoreId()
+    public async Task SearchProducts_RequiresStoreId()
     {
         var service = new UcpCatalogService(
             new StubXApiExecutor(SearchResponseJson),
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions()));
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.SearchProductsAsync(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
         Assert.Equal(ModuleConstants.ErrorCodes.MissingStoreId, exception.Code);
         Assert.Equal(400, exception.StatusCode);
     }
 
     [Fact]
-    public async Task SearchProductsAsync_AcceptsTopLevelStoreIdAndLimit()
+    public async Task SearchProducts_AcceptsTopLevelStoreIdAndLimit()
     {
         var executor = new StubXApiExecutor(SearchResponseJson);
         var service = new UcpCatalogService(
@@ -94,7 +94,7 @@ public class UcpCatalogServiceTests
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultCurrency = "USD", DefaultCultureName = "en-US" }));
 
-        var response = await service.SearchProductsAsync(new UcpCatalogSearchRequest
+        var response = await service.SearchProducts(new UcpCatalogSearchRequest
         {
             StoreId = "store-acme",
             Query = "iPhone 17 Pro",
@@ -107,14 +107,14 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
-    public async Task SearchProductsAsync_AppliesMinimumPriceFilter()
+    public async Task SearchProducts_AppliesMinimumPriceFilter()
     {
         var service = new UcpCatalogService(
             new StubXApiExecutor(SearchResponseJson),
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultStoreId = "acme", DefaultCurrency = "USD" }));
 
-        var response = await service.SearchProductsAsync(new UcpCatalogSearchRequest
+        var response = await service.SearchProducts(new UcpCatalogSearchRequest
         {
             Query = "jacket",
             Filters = new UcpSearchFilters
@@ -129,14 +129,14 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
-    public async Task GetProductAsync_ReturnsNotFoundForNullProduct()
+    public async Task GetProduct_ReturnsNotFoundForNullProduct()
     {
         var service = new UcpCatalogService(
             new StubXApiExecutor("""{"data":{"product":null}}"""),
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProductAsync("missing", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProduct("missing", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
         Assert.Equal(ModuleConstants.ErrorCodes.ProductNotFound, exception.Code);
         Assert.Equal(404, exception.StatusCode);
@@ -153,7 +153,7 @@ public class UcpCatalogServiceTests
 
         public XApiExecutionRequest LastRequest { get; private set; }
 
-        public Task<XApiExecutionResult> ExecuteAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
             LastRequest = request;
 
@@ -164,14 +164,14 @@ public class UcpCatalogServiceTests
             });
         }
 
-        public Task<XApiExecutionResult> ExecuteCartAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> ExecuteCart(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
-            return ExecuteAsync(request, cancellationToken);
+            return Execute(request, cancellationToken);
         }
 
-        public Task<XApiExecutionResult> ExecuteOrderAsync(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        public Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
-            return ExecuteAsync(request, cancellationToken);
+            return Execute(request, cancellationToken);
         }
     }
 
