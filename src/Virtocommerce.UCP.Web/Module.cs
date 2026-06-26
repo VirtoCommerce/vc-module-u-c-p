@@ -32,6 +32,21 @@ public class Module : IModule, IHasConfiguration
         {
             options.Filters.Add<UcpExceptionFilter>();
         });
+        serviceCollection
+            .AddMcpServer(options =>
+            {
+                options.ServerInfo = new()
+                {
+                    Name = "Virto Commerce UCP Instructions",
+                    Version = ModuleConstants.UcpVersion,
+                };
+                options.ServerInstructions = ModuleConstants.McpInstructions;
+            })
+            .WithHttpTransport(options =>
+            {
+                options.Stateless = true;
+            })
+            .WithToolsFromAssembly();
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();

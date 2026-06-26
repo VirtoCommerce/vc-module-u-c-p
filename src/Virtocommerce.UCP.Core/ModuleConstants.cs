@@ -8,6 +8,18 @@ public static class ModuleConstants
     public const string UcpVersion = "1.0";
     public const string Source = "UCP";
     public const string Platform = "VirtoCommerce";
+    public const string McpInstructions = """
+        This MCP endpoint exposes Virto Commerce UCP tools for the storefront/platform where this MCP server is installed.
+        Use typed MCP tools for commerce operations: get_store_capabilities, search_products, get_product, create_cart, list_carts, get_cart, update_cart, create_checkout, update_checkout, get_payment_handlers, handoff_checkout, list_countries, resolve_country, list_regions, and track_order.
+        Do not pass storefront URLs to MCP tools. This MCP server already represents the target Virto Commerce UCP installation.
+        Do not infer another target storefront from the MCP transport URL or user-provided links.
+        Commerce tools execute local UCP services directly in this platform process.
+        Do not use browser/web/search tools to execute UCP operations when MCP tools are available.
+        When store_id, currency, or language are unknown, call get_store_capabilities first and use the default store metadata returned by this installation. If this installation exposes multiple stores without a default, use an explicit store_id from the user or ask the user to choose.
+        For shopping flows, use MCP tools directly: search products, create or update cart, resolve country/regions, create checkout, then handoff checkout.
+        Delivery addresses belong in structured shipping_address fields, not notes.
+        For hosted checkout, return checkout.continue_url to the buyer and keep cart_id for later track_order.
+        """;
 
     public static class Capabilities
     {
@@ -47,6 +59,7 @@ public static class ModuleConstants
     public static class Endpoints
     {
         public const string Discovery = "/.well-known/ucp";
+        public const string Mcp = "/ucp/mcp";
         public const string CatalogSearch = "/ucp/v1/catalog/search";
         public const string CatalogProduct = "/ucp/v1/catalog/products/{id}";
         public const string CartCreate = "/ucp/v1/carts";
@@ -63,6 +76,25 @@ public static class ModuleConstants
         public const string GeographyCountryResolve = "/ucp/v1/geography/countries/resolve";
         public const string GeographyRegions = "/ucp/v1/geography/countries/{countryId}/regions";
         public const string StorefrontRestore = "/ucp/v1/internal/handoff/restore";
+    }
+
+    public static class Operations
+    {
+        public const string GetStoreCapabilities = "get_store_capabilities";
+        public const string SearchProducts = "search_products";
+        public const string GetProduct = "get_product";
+        public const string CreateCart = "create_cart";
+        public const string ListCarts = "list_carts";
+        public const string GetCart = "get_cart";
+        public const string UpdateCart = "update_cart";
+        public const string CreateCheckout = "create_checkout";
+        public const string UpdateCheckout = "update_checkout";
+        public const string GetPaymentHandlers = "get_payment_handlers";
+        public const string HandoffCheckout = "handoff_checkout";
+        public const string TrackOrder = "track_order";
+        public const string ListCountries = "list_countries";
+        public const string ResolveCountry = "resolve_country";
+        public const string ListRegions = "list_regions";
     }
 
     public static class McpTools

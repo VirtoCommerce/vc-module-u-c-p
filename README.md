@@ -3,10 +3,11 @@
 The Virto Commerce UCP module exposes HTTP APIs for Universal Commerce Protocol (UCP) on top of existing Virto Commerce Platform capabilities.
 
 It provides public UCP endpoints for discovery, catalog, cart, checkout handoff, geography, and order tracking operations. Requests are adapted to in-process Virto Commerce XAPI calls and platform services without an additional HTTP hop inside the platform process.
+It also exposes a Streamable HTTP MCP endpoint at `/ucp/mcp`.
 
 ## Overview
 
-`Virtocommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients and MCP tools while delegating commerce behavior to existing Virto Commerce modules.
+`Virtocommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients while delegating commerce behavior to existing Virto Commerce modules.
 
 The current implementation covers:
 
@@ -20,6 +21,7 @@ The current implementation covers:
 - Geography lookup through the platform `ICountriesService`.
 - Structured UCP errors.
 - Buyer context propagation from HTTP headers.
+- Streamable HTTP MCP server at `/ucp/mcp` with typed UCP commerce tools for the installed storefront/platform.
 
 Canonical public UCP endpoints are published without the `/api` prefix.
 
@@ -39,8 +41,9 @@ The module does not define a UCP database model and does not run module database
 
 ```mermaid
 flowchart LR
-    Client["UCP / MCP client"]
-    UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*"]
+    Client["UCP client"]
+    McpClient["MCP client"]
+    UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*<br/>/ucp/mcp"]
     Controllers["ASP.NET Core controllers"]
     Services["UCP services<br/>Virtocommerce.UCP.Data"]
     Cache["Distributed cache<br/>Redis-backed or in-memory fallback<br/>handoff sessions"]
@@ -49,6 +52,7 @@ flowchart LR
     Modules["Commerce modules<br/>XCatalog, XCart, Orders,<br/>Marketing, Store, Pricing, Inventory"]
 
     Client --> UcpHttp
+    McpClient --> UcpHttp
     UcpHttp --> Controllers
     Controllers --> Services
     Services --> Cache
@@ -122,9 +126,40 @@ The module registers the platform setting `UCP.Enabled`.
 GET /.well-known/ucp
 ```
 
-Returns the UCP profile: supported capabilities, default store metadata, endpoint metadata, headers, auth shape, MCP tool names, integration guidance, payment handlers, and structured error codes.
+Returns the UCP profile: supported capabilities, default store metadata, endpoint metadata, headers, auth shape, integration guidance, payment handlers, and structured error codes.
 
-`mcp_tools` contains only callable tools. Planned operations remain in `endpoints.operations` but are not advertised as MCP tools.
+UCP operations are advertised as HTTP endpoints in `endpoints.operations`.
+
+## MCP Server
+
+```http
+POST /ucp/mcp
+GET /ucp/mcp
+```
+
+The MCP server uses the official C# SDK `ModelContextProtocol.AspNetCore` with Streamable HTTP transport in stateless mode.
+
+The MCP server exposes typed UCP commerce tools for the Virto Commerce storefront/platform where this module is installed:
+
+- `get_store_capabilities`
+- `search_products`
+- `get_product`
+- `create_cart`
+- `list_carts`
+- `get_cart`
+- `update_cart`
+- `create_checkout`
+- `update_checkout`
+- `get_payment_handlers`
+- `handoff_checkout`
+- `list_countries`
+- `resolve_country`
+- `list_regions`
+- `track_order`
+
+Commerce tools do not accept storefront URLs. The MCP endpoint itself represents the target Virto Commerce UCP installation, and tools execute the module's local UCP services directly inside the platform process.
+
+This follows the hosted-commerce MCP pattern: install or configure the MCP remote for the storefront/platform you want the agent to operate on, then use the typed tools for search, cart, checkout, geography, handoff, and order tracking.
 
 ### Catalog Search
 
