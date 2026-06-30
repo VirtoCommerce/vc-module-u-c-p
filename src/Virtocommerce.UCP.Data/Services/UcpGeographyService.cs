@@ -114,7 +114,9 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
         cancellationToken.ThrowIfCancellationRequested();
 
         return countries.FirstOrDefault(country => string.Equals(country.Name, normalizedQuery, StringComparison.OrdinalIgnoreCase))
-            ?? countries.FirstOrDefault(country => string.Equals(country.Id, normalizedQuery, StringComparison.OrdinalIgnoreCase));
+            ?? countries.FirstOrDefault(country => string.Equals(country.Id, normalizedQuery, StringComparison.OrdinalIgnoreCase))
+            ?? FindKnownCountryAlias(countries, normalizedQuery)
+            ?? FindUniqueCountryByNamePart(countries, normalizedQuery);
     }
 
     protected virtual async Task<UcpCountry> MapCountry(Country country, CancellationToken cancellationToken)
@@ -143,6 +145,53 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
     {
         return !string.IsNullOrWhiteSpace(value)
             && value.Contains(query, StringComparison.OrdinalIgnoreCase);
+    }
+
+    protected static Country FindUniqueCountryByNamePart(IEnumerable<Country> countries, string query)
+    {
+        var normalizedQuery = NormalizeName(query);
+        if (string.IsNullOrWhiteSpace(normalizedQuery))
+        {
+            return null;
+        }
+
+        var matches = countries
+            .Where(country =>
+            {
+                var normalizedName = NormalizeName(country.Name);
+                return normalizedName.Contains(normalizedQuery, StringComparison.OrdinalIgnoreCase)
+                    || normalizedQuery.Contains(normalizedName, StringComparison.OrdinalIgnoreCase);
+            })
+            .Take(2)
+            .ToList();
+
+        return matches.Count == 1 ? matches[0] : null;
+    }
+
+    protected static Country FindKnownCountryAlias(IEnumerable<Country> countries, string query)
+    {
+        var normalizedQuery = NormalizeName(query);
+        if (string.Equals(normalizedQuery, "united states", StringComparison.OrdinalIgnoreCase))
+        {
+            return countries.FirstOrDefault(country => string.Equals(country.Id, "USA", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return null;
+    }
+
+    protected static string NormalizeName(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var words = value
+            .Split([' ', ',', '.', '-', '_'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(word => !string.Equals(word, "of", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(word, "the", StringComparison.OrdinalIgnoreCase));
+
+        return string.Join(' ', words);
     }
 
     private bool TryGetCountryByCode(string code, out Country country)

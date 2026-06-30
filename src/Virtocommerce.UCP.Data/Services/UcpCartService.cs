@@ -186,6 +186,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(cartElement, "customerId"));
         cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(cartElement, "organizationId"));
 
+        var currentCart = ReadCart(cartElement);
         var shippingAddress = await PrepareAddress(request.ShippingAddress, request.Buyer, cancellationToken);
         var billingAddress = await PrepareAddress(request.BillingAddress, request.Buyer, cancellationToken);
 
@@ -193,18 +194,20 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateRecipientName(shippingAddress, "shipping_address");
 
+            var cartAddress = WithAddressId(shippingAddress, GetExistingCartAddressId(currentCart, "shipping"));
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateShippingAddress",
                 cartRequest,
-                BuildAddressCommand(cartRequest, shippingAddress, ShippingAddressType),
+                BuildAddressCommand(cartRequest, cartAddress, ShippingAddressType),
                 cancellationToken);
 
+            var shipmentAddress = WithAddressId(shippingAddress, GetExistingShipmentAddressId(currentCart) ?? cartAddress.Id);
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartShipment",
                 "UcpAddOrUpdateShipmentAddress",
                 cartRequest,
-                BuildShipmentCommand(cartRequest, shippingAddress, ReadFirstArrayObjectString(cartElement, "shipments", "id")),
+                BuildShipmentCommand(cartRequest, shipmentAddress, ReadFirstArrayObjectString(cartElement, "shipments", "id") ?? GetExistingShipmentId(currentCart)),
                 cancellationToken);
         }
 
@@ -212,18 +215,20 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateRecipientName(billingAddress, "billing_address");
 
+            var cartAddress = WithAddressId(billingAddress, GetExistingCartAddressId(currentCart, "billing"));
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateBillingAddress",
                 cartRequest,
-                BuildAddressCommand(cartRequest, billingAddress, BillingAddressType),
+                BuildAddressCommand(cartRequest, cartAddress, BillingAddressType),
                 cancellationToken);
 
+            var paymentAddress = WithAddressId(billingAddress, GetExistingPaymentAddressId(currentCart) ?? cartAddress.Id);
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartPayment",
                 "UcpAddOrUpdatePaymentAddress",
                 cartRequest,
-                BuildPaymentCommand(cartRequest, billingAddress, ReadFirstArrayObjectString(cartElement, "payments", "id")),
+                BuildPaymentCommand(cartRequest, paymentAddress, ReadFirstArrayObjectString(cartElement, "payments", "id") ?? GetExistingPaymentId(currentCart)),
                 cancellationToken);
         }
 
@@ -926,7 +931,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             City = ReadString(address, "city"),
             Region = ReadString(address, "regionName"),
             RegionId = ReadString(address, "regionId"),
-            PostalCode = FirstNotEmpty(ReadString(address, "postalCode"), ReadString(address, "zip")),
+            PostalCode = FirstNotEmpty(ReadString(address, "postalCode"), ReadString(address, "zip"), ReadString(address, "postal_code")),
             CountryCode = ReadString(address, "countryCode"),
             CountryName = ReadString(address, "countryName"),
             Phone = ReadString(address, "phone"),
@@ -1071,6 +1076,43 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
+    protected static string GetExistingCartAddressId(UcpCart cart, string addressType)
+    {
+        return cart?.Addresses.LastOrDefault(x => string.Equals(x.AddressType, addressType, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
+
+    protected static string GetExistingShipmentId(UcpCart cart)
+    {
+        return cart?.Shipments.LastOrDefault()?.Id;
+    }
+
+    protected static string GetExistingShipmentAddressId(UcpCart cart)
+    {
+        return cart?.Shipments.LastOrDefault(x => x.DeliveryAddress != null)?.DeliveryAddress?.Id;
+    }
+
+    protected static string GetExistingPaymentId(UcpCart cart)
+    {
+        return cart?.Payments.LastOrDefault()?.Id;
+    }
+
+    protected static string GetExistingPaymentAddressId(UcpCart cart)
+    {
+        return cart?.Payments.LastOrDefault(x => x.BillingAddress != null)?.BillingAddress?.Id;
+    }
+
+    protected UcpCheckoutAddress WithAddressId(UcpCheckoutAddress address, string id)
+    {
+        if (address == null || string.IsNullOrWhiteSpace(id) || !string.IsNullOrWhiteSpace(address.Id))
+        {
+            return address;
+        }
+
+        var result = CloneAddress(address);
+        result.Id = id;
+        return result;
+    }
+
     protected const string MoneyFields = """
           amount
           formattedAmount
@@ -1127,6 +1169,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
           countryName
           regionId
           regionName
+          postalCode
           zip
           phone
           email
@@ -1153,6 +1196,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             countryName
             regionId
             regionName
+            postalCode
             zip
             phone
             email
@@ -1179,6 +1223,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             countryName
             regionId
             regionName
+            postalCode
             zip
             phone
             email

@@ -269,6 +269,10 @@ public class UcpCartServiceTests
         Assert.Contains(response.Cart.Addresses, x => x.AddressType == "billing" && x.Line1 == "1 Main St");
         Assert.Contains(response.Cart.Shipments, x => x.DeliveryAddress?.AddressType == "shipping" && x.DeliveryAddress.Line1 == "1 Main St");
         Assert.Contains(response.Cart.Payments, x => x.BillingAddress?.AddressType == "billing" && x.BillingAddress.Line1 == "1 Main St");
+        Assert.Contains(response.Cart.Addresses, x => x.AddressType == "shipping" && x.PostalCode == "98101");
+        Assert.Contains(response.Cart.Addresses, x => x.AddressType == "billing" && x.PostalCode == "98101");
+        Assert.Contains(response.Cart.Shipments, x => x.DeliveryAddress?.PostalCode == "98101");
+        Assert.Contains(response.Cart.Payments, x => x.BillingAddress?.PostalCode == "98101");
 
         var shippingAddress = executor.Requests[1].Variables["command"].AsDictionary()["address"].AsDictionary();
         var shipment = executor.Requests[2].Variables["command"].AsDictionary()["shipment"].AsDictionary();
@@ -292,8 +296,109 @@ public class UcpCartServiceTests
         Assert.Equal(string.Empty, billingAddress["zip"]);
         Assert.Equal(1, paymentAddress["addressType"]);
         Assert.Equal("1 Main St", paymentAddress["line1"]);
-        Assert.All(executor.Requests, request => Assert.DoesNotContain("postalCode", request.Query));
+        Assert.All(executor.Requests, request => Assert.Contains("postalCode", request.Query));
         Assert.All(executor.Requests, request => Assert.Contains("zip", request.Query));
+    }
+
+    [Fact]
+    public async Task ApplyCheckoutData_ReusesExistingAddressIds()
+    {
+        var executor = new StubXApiExecutor(
+            CartWithPaymentAddressJson.Replace("\"addOrUpdateCartPayment\"", "\"cart\"", System.StringComparison.Ordinal),
+            CartWithShippingAddressJson,
+            CartWithShipmentAddressJson,
+            CartWithBillingAddressJson,
+            CartWithPaymentAddressJson);
+        var service = CreateService(executor);
+
+        await service.ApplyCheckoutData("cart-1", new UcpCheckoutRequest
+        {
+            Context = new UcpCartContext
+            {
+                StoreId = "store-acme",
+                Currency = "USD",
+                Language = "en-US",
+            },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "2 Main St",
+                City = "Bellevue",
+                PostalCode = "98004",
+                CountryCode = "US",
+            },
+            BillingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "2 Main St",
+                City = "Bellevue",
+                PostalCode = "98004",
+                CountryCode = "US",
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var shippingAddress = executor.Requests[1].Variables["command"].AsDictionary()["address"].AsDictionary();
+        var shipment = executor.Requests[2].Variables["command"].AsDictionary()["shipment"].AsDictionary();
+        var shipmentAddress = shipment["deliveryAddress"].AsDictionary();
+        var billingAddress = executor.Requests[3].Variables["command"].AsDictionary()["address"].AsDictionary();
+        var payment = executor.Requests[4].Variables["command"].AsDictionary()["payment"].AsDictionary();
+        var paymentAddress = payment["billingAddress"].AsDictionary();
+
+        Assert.Equal("ship-1", shippingAddress["id"]);
+        Assert.Equal("ship-1", shippingAddress["key"]);
+        Assert.Equal("ship-1", shipmentAddress["id"]);
+        Assert.Equal("shipment-1", shipment["id"]);
+        Assert.Equal("bill-1", billingAddress["id"]);
+        Assert.Equal("bill-1", billingAddress["key"]);
+        Assert.Equal("bill-1", paymentAddress["id"]);
+        Assert.Equal("payment-1", payment["id"]);
+    }
+
+    [Fact]
+    public async Task ApplyCheckoutData_ReadsXCartPostalCodeWhenZipIsEmpty()
+    {
+        var executor = new StubXApiExecutor(
+            CartQueryJson,
+            CartWithShippingAddressPostalCodeJson,
+            CartWithShipmentAddressPostalCodeJson,
+            CartWithBillingAddressPostalCodeJson,
+            CartWithPaymentAddressPostalCodeJson);
+        var service = CreateService(executor);
+
+        var response = await service.ApplyCheckoutData("cart-1", new UcpCheckoutRequest
+        {
+            Context = new UcpCartContext
+            {
+                StoreId = "store-acme",
+                Currency = "USD",
+                Language = "en-US",
+            },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "1 Main St",
+                City = "Almaty",
+                PostalCode = "050000",
+                CountryCode = "KAZ",
+            },
+            BillingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "1 Main St",
+                City = "Almaty",
+                PostalCode = "050000",
+                CountryCode = "KAZ",
+            },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Contains(response.Cart.Addresses, x => x.AddressType == "shipping" && x.PostalCode == "050000");
+        Assert.Contains(response.Cart.Addresses, x => x.AddressType == "billing" && x.PostalCode == "050000");
+        Assert.Contains(response.Cart.Shipments, x => x.DeliveryAddress?.PostalCode == "050000");
+        Assert.Contains(response.Cart.Payments, x => x.BillingAddress?.PostalCode == "050000");
     }
 
     [Fact]
@@ -591,4 +696,8 @@ public class UcpCartServiceTests
     private static readonly string CartWithPaymentAddressJson = CartWithBillingAddressJson
         .Replace("\"addOrUpdateCartAddress\"", "\"addOrUpdateCartPayment\"", System.StringComparison.Ordinal)
         .Replace("\"items\":[", "\"shipments\":[{\"id\":\"shipment-1\",\"shipmentMethodCode\":null,\"shipmentMethodOption\":null,\"price\":{\"amount\":0.0,\"formattedAmount\":\"$0.00\",\"currency\":{\"code\":\"USD\"}},\"deliveryAddress\":{\"id\":\"ship-1\",\"key\":\"ship-1\",\"addressType\":2,\"name\":\"Ada Buyer\",\"organization\":null,\"firstName\":\"Ada\",\"lastName\":\"Buyer\",\"line1\":\"1 Main St\",\"line2\":null,\"city\":\"Seattle\",\"countryCode\":\"US\",\"countryName\":\"United States\",\"regionId\":\"WA\",\"regionName\":\"Washington\",\"zip\":\"98101\",\"phone\":\"555-0100\",\"email\":\"ada@example.test\"}}],\"payments\":[{\"id\":\"payment-1\",\"paymentGatewayCode\":null,\"amount\":{\"amount\":0.0,\"formattedAmount\":\"$0.00\",\"currency\":{\"code\":\"USD\"}},\"billingAddress\":{\"id\":\"bill-1\",\"key\":\"bill-1\",\"addressType\":1,\"name\":\"Ada Buyer\",\"organization\":null,\"firstName\":\"Ada\",\"lastName\":\"Buyer\",\"line1\":\"1 Main St\",\"line2\":null,\"city\":\"Seattle\",\"countryCode\":\"US\",\"countryName\":\"United States\",\"regionId\":null,\"regionName\":null,\"zip\":\"98101\",\"phone\":null,\"email\":null}}],\"items\":[", System.StringComparison.Ordinal);
+    private static readonly string CartWithShippingAddressPostalCodeJson = CartWithShippingAddressJson.Replace("\"zip\":\"98101\"", "\"postalCode\":\"050000\",\"zip\":null", System.StringComparison.Ordinal);
+    private static readonly string CartWithShipmentAddressPostalCodeJson = CartWithShipmentAddressJson.Replace("\"zip\":\"98101\"", "\"postalCode\":\"050000\",\"zip\":null", System.StringComparison.Ordinal);
+    private static readonly string CartWithBillingAddressPostalCodeJson = CartWithBillingAddressJson.Replace("\"zip\":\"98101\"", "\"postalCode\":\"050000\",\"zip\":null", System.StringComparison.Ordinal);
+    private static readonly string CartWithPaymentAddressPostalCodeJson = CartWithPaymentAddressJson.Replace("\"zip\":\"98101\"", "\"postalCode\":\"050000\",\"zip\":null", System.StringComparison.Ordinal);
 }

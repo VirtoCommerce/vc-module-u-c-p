@@ -5,6 +5,12 @@ namespace Virtocommerce.UCP.Web.Models;
 
 public sealed class UcpOrderTrackingQuery
 {
+    [FromQuery(Name = "order_id")]
+    public string OrderId { get; set; }
+
+    [FromQuery(Name = "order_number")]
+    public string OrderNumber { get; set; }
+
     [FromQuery(Name = "cart_id")]
     public string CartId { get; set; }
 
@@ -21,6 +27,8 @@ public sealed class UcpOrderTrackingQuery
     {
         return new UcpOrderTrackingRequest
         {
+            OrderId = OrderId,
+            OrderNumber = OrderNumber,
             CartId = CartId,
             Context = new UcpCartContext
             {

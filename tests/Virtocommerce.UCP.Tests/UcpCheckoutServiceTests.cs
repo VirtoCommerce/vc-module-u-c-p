@@ -89,6 +89,19 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
+    public void AddressJson_UsesPostalCodeContractName()
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new UcpCheckoutAddress
+        {
+            PostalCode = "98101",
+        });
+
+        Assert.Contains("\"postal_code\":\"98101\"", json);
+        Assert.DoesNotContain("postalCode", json);
+        Assert.DoesNotContain("zip", json);
+    }
+
+    [Fact]
     public async Task HandoffCheckout_AcceptsTopLevelContextAliases()
     {
         var cartService = new StubCartService(CreateCart());
@@ -195,6 +208,40 @@ public class UcpCheckoutServiceTests
         }, TestContext.Current.CancellationToken);
 
         Assert.Contains(response.Messages, x => x.Code == "shipping_postal_code_missing" && x.Content.Contains("postal_code is missing", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task UpdateCheckout_UsesRequestedPostalCodeWhenCartSnapshotOmitsIt()
+    {
+        var cart = CreateCart();
+        cart.Addresses.Add(new UcpCartAddress
+        {
+            Id = "ship-1",
+            AddressType = "shipping",
+            FirstName = "Ada",
+            LastName = "Buyer",
+            Line1 = "2 Main St",
+            City = "Bellevue",
+            CountryCode = "US",
+        });
+        var service = CreateService(new StubCartService(cart));
+
+        var response = await service.UpdateCheckout("cart-1", new UcpCheckoutRequest
+        {
+            Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "2 Main St",
+                City = "Bellevue",
+                PostalCode = "98004",
+                CountryCode = "US",
+            },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("98004", response.Checkout.ShippingAddress.PostalCode);
+        Assert.DoesNotContain(response.Messages, x => x.Code == "shipping_postal_code_missing");
     }
 
     [Fact]
