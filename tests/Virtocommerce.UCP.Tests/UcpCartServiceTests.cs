@@ -146,6 +146,60 @@ public class UcpCartServiceTests
     }
 
     [Fact]
+    public async Task UpdateCart_ConsolidatesDuplicateProductLines()
+    {
+        var executor = new StubXApiExecutor(CartQueryJson, CartItemRemovedJson, CartQuantityChangedJson.Replace("\"quantity\":3", "\"quantity\":2", System.StringComparison.Ordinal));
+        var service = CreateService(executor);
+
+        await service.UpdateCart("cart-1", new UcpCartRequest
+        {
+            Context = new UcpCartContext
+            {
+                StoreId = "store-acme",
+                Currency = "USD",
+                Language = "en-US",
+            },
+            LineItems =
+            {
+                new UcpCartLineItemRequest { Id = "line-1", ProductId = "product-1", Quantity = 1 },
+                new UcpCartLineItemRequest { ProductId = "product-1", Quantity = 1 },
+            },
+            Coupons = { "SAVE10" },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(["UcpGetCart", "UcpRemoveCartItem", "UcpChangeCartItemQuantity"], executor.OperationNames);
+        Assert.Equal("line-2", executor.Requests[1].Variables["command"].AsDictionary()["lineItemId"]);
+        Assert.Equal("line-1", executor.Requests[2].Variables["command"].AsDictionary()["lineItemId"]);
+        Assert.Equal(2, executor.Requests[2].Variables["command"].AsDictionary()["quantity"]);
+    }
+
+    [Fact]
+    public async Task UpdateCart_ReturnsMessageForRejectedCoupon()
+    {
+        var executor = new StubXApiExecutor(CartQueryJson, CartCouponRemovedJson, CartWithRejectedCouponJson);
+        var service = CreateService(executor);
+
+        var response = await service.UpdateCart("cart-1", new UcpCartRequest
+        {
+            Context = new UcpCartContext
+            {
+                StoreId = "store-acme",
+                Currency = "USD",
+                Language = "en-US",
+            },
+            LineItems =
+            {
+                new UcpCartLineItemRequest { Id = "line-1", ProductId = "product-1", Quantity = 1 },
+                new UcpCartLineItemRequest { Id = "line-2", ProductId = "product-2", Quantity = 2 },
+            },
+            Coupons = { "BOGUS123" },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Contains(response.Cart.Coupons, coupon => coupon.Code == "BOGUS123" && !coupon.Applied);
+        Assert.Contains(response.Messages, message => message.Code == "coupon_rejected" && message.Content.Contains("BOGUS123", System.StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task UpdateCart_AdoptsExistingCartOwnerWhenBuyerContextIsMissing()
     {
         var executor = new StubXApiExecutor(CartOwnedByGeneratedBuyerJson, CartQuantityChangedForGeneratedBuyerJson);
@@ -496,6 +550,49 @@ public class UcpCartServiceTests
         Assert.Equal("Fixture Region", shippingAddress["regionName"]);
     }
 
+    [Fact]
+    public async Task ApplyCheckoutData_ClearsRegionWhenAddressOmitsRegion()
+    {
+        var executor = new StubXApiExecutor(
+            CartQueryJson,
+            CartWithShippingAddressJson,
+            CartWithShipmentAddressJson);
+        var service = CreateService(executor, new StubCountriesService(
+        [
+            new Country
+            {
+                Id = "GBR",
+                Name = "United Kingdom",
+                Regions = [],
+            },
+        ]));
+
+        await service.ApplyCheckoutData("cart-1", new UcpCheckoutRequest
+        {
+            Context = new UcpCartContext
+            {
+                StoreId = "store-acme",
+                Currency = "USD",
+                Language = "en-US",
+            },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Ada",
+                LastName = "Buyer",
+                Line1 = "10 Downing St",
+                City = "London",
+                CountryCode = "GB",
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var shippingAddress = executor.Requests[1].Variables["command"].AsDictionary()["address"].AsDictionary();
+
+        Assert.Equal("GBR", shippingAddress["countryCode"]);
+        Assert.Equal("United Kingdom", shippingAddress["countryName"]);
+        Assert.Equal(string.Empty, shippingAddress["regionId"]);
+        Assert.Equal(string.Empty, shippingAddress["regionName"]);
+    }
+
     private static UcpCartService CreateService(IXApiInProcessExecutor executor, ICountriesService countriesService = null, UcpOptions options = null)
     {
         var httpContextAccessor = new HttpContextAccessor
@@ -684,6 +781,9 @@ public class UcpCartServiceTests
     private static readonly string CartQuantityChangedJson = CartWithTwoItemsJson.Replace("\"addItem\"", "\"changeCartItemQuantity\"", System.StringComparison.Ordinal).Replace("\"quantity\":1", "\"quantity\":3", System.StringComparison.Ordinal);
     private static readonly string CartItemRemovedJson = CartWithTwoItemsJson.Replace("\"addItem\"", "\"removeCartItem\"", System.StringComparison.Ordinal);
     private static readonly string CartCouponRemovedJson = CartWithOneItemJson.Replace("\"addItem\"", "\"removeCoupon\"", System.StringComparison.Ordinal).Replace("\"quantity\":1", "\"quantity\":3", System.StringComparison.Ordinal);
+    private static readonly string CartWithRejectedCouponJson = CartWithTwoItemsJson
+        .Replace("\"addItem\"", "\"addCoupon\"", System.StringComparison.Ordinal)
+        .Replace("\"coupons\":[{\"code\":\"SAVE10\",\"isAppliedSuccessfully\":true}]", "\"coupons\":[{\"code\":\"BOGUS123\",\"isAppliedSuccessfully\":false}]", System.StringComparison.Ordinal);
     private static readonly string CartWithShippingAddressJson = CartWithOneItemJson
         .Replace("\"addItem\"", "\"addOrUpdateCartAddress\"", System.StringComparison.Ordinal)
         .Replace("\"coupons\":[],", "\"coupons\":[],\"addresses\":[{\"id\":\"ship-1\",\"key\":\"ship-1\",\"addressType\":2,\"name\":\"Ada Buyer\",\"organization\":null,\"firstName\":\"Ada\",\"lastName\":\"Buyer\",\"line1\":\"1 Main St\",\"line2\":null,\"city\":\"Seattle\",\"countryCode\":\"US\",\"countryName\":\"United States\",\"regionId\":\"WA\",\"regionName\":\"Washington\",\"zip\":\"98101\",\"phone\":\"555-0100\",\"email\":\"ada@example.test\"}],", System.StringComparison.Ordinal);

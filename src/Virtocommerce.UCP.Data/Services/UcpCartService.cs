@@ -160,8 +160,8 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(currentCart, "customerId"));
         cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(currentCart, "organizationId"));
 
-        var desiredItems = request.LineItems ?? [];
         var currentItems = ReadCartLineItems(currentCart);
+        var desiredItems = ConsolidateDesiredItems(request.LineItems ?? [], currentItems);
         var cartElement = await RemoveMissingItems(currentCart, cartRequest, currentItems, desiredItems, cancellationToken);
         cartElement = await ApplyDesiredItems(cartId, cartElement, cartRequest, currentItems, desiredItems, cancellationToken);
         cartElement = await ApplyCoupons(cartElement, cartRequest, currentCart, request.Coupons, cancellationToken);
@@ -346,6 +346,53 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         }
 
         return cartElement;
+    }
+
+    protected virtual IList<UcpCartLineItemRequest> ConsolidateDesiredItems(
+        IEnumerable<UcpCartLineItemRequest> desiredItems,
+        IEnumerable<UcpCartLineItem> currentItems)
+    {
+        var result = new List<UcpCartLineItemRequest>();
+        var byProductId = new Dictionary<string, UcpCartLineItemRequest>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var desiredItem in desiredItems ?? [])
+        {
+            var currentItem = ResolveCurrentItemForConsolidation(desiredItem, currentItems);
+            var productId = FirstNotEmpty(desiredItem?.ProductId, currentItem?.ProductId);
+            if (string.IsNullOrWhiteSpace(productId))
+            {
+                result.Add(desiredItem);
+                continue;
+            }
+
+            if (!byProductId.TryGetValue(productId, out var consolidated))
+            {
+                consolidated = new UcpCartLineItemRequest
+                {
+                    Id = currentItem?.Id ?? desiredItem.Id,
+                    ProductId = productId,
+                    Quantity = desiredItem.Quantity,
+                };
+                byProductId[productId] = consolidated;
+                result.Add(consolidated);
+                continue;
+            }
+
+            consolidated.Quantity += desiredItem.Quantity;
+            consolidated.Id = FirstNotEmpty(consolidated.Id, currentItem?.Id, desiredItem.Id);
+        }
+
+        return result;
+    }
+
+    protected virtual UcpCartLineItem ResolveCurrentItemForConsolidation(UcpCartLineItemRequest desiredItem, IEnumerable<UcpCartLineItem> currentItems)
+    {
+        if (desiredItem == null || string.IsNullOrWhiteSpace(desiredItem.Id))
+        {
+            return null;
+        }
+
+        return currentItems.FirstOrDefault(item => string.Equals(item.Id, desiredItem.Id, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<JsonElement> ApplyDesiredItems(
@@ -596,8 +643,8 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         AddIfNotEmpty(result, "line1", address.Line1);
         AddIfNotEmpty(result, "line2", address.Line2);
         AddIfNotEmpty(result, "city", address.City);
-        AddIfNotEmpty(result, "regionName", address.Region);
-        AddIfNotEmpty(result, "regionId", address.RegionId);
+        result["regionName"] = address.Region ?? string.Empty;
+        result["regionId"] = address.RegionId ?? string.Empty;
         AddIfNotEmpty(result, "countryCode", address.CountryCode);
         AddIfNotEmpty(result, "countryName", address.CountryName);
         AddIfNotEmpty(result, "phone", address.Phone);
@@ -816,6 +863,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         cart.ContinueUrl = BuildContinueUrl(cart.Id);
         cart.Messages = ReadMessages(element);
+        AddCouponMessages(cart);
 
         return cart;
     }
@@ -957,6 +1005,26 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         AddMessages(messages, element, "validationErrors", "error");
         AddMessages(messages, element, "warnings", "warning");
         return messages;
+    }
+
+    protected virtual void AddCouponMessages(UcpCart cart)
+    {
+        foreach (var coupon in cart.Coupons.Where(coupon => !coupon.Applied && !string.IsNullOrWhiteSpace(coupon.Code)))
+        {
+            if (cart.Messages.Any(message => string.Equals(message.Code, "coupon_rejected", StringComparison.OrdinalIgnoreCase)
+                && message.Content?.Contains(coupon.Code, StringComparison.OrdinalIgnoreCase) == true))
+            {
+                continue;
+            }
+
+            cart.Messages.Add(new UcpMessage
+            {
+                Type = "warning",
+                Code = "coupon_rejected",
+                Content = $"Coupon '{coupon.Code}' was not applied.",
+                Severity = "warning",
+            });
+        }
     }
 
     protected virtual void AddMessages(IList<UcpMessage> messages, JsonElement element, string propertyName, string type)
