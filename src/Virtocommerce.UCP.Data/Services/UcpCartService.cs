@@ -357,8 +357,13 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         foreach (var desiredItem in desiredItems ?? [])
         {
+            if (desiredItem == null)
+            {
+                continue;
+            }
+
             var currentItem = ResolveCurrentItemForConsolidation(desiredItem, currentItems);
-            var productId = FirstNotEmpty(desiredItem?.ProductId, currentItem?.ProductId);
+            var productId = FirstNotEmpty(desiredItem.ProductId, currentItem?.ProductId);
             if (string.IsNullOrWhiteSpace(productId))
             {
                 result.Add(desiredItem);
@@ -1009,10 +1014,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
     protected virtual void AddCouponMessages(UcpCart cart)
     {
-        foreach (var coupon in cart.Coupons.Where(coupon => !coupon.Applied && !string.IsNullOrWhiteSpace(coupon.Code)))
+        var rejectedCouponCodes = cart.Coupons
+            .Where(coupon => !coupon.Applied && !string.IsNullOrWhiteSpace(coupon.Code))
+            .Select(coupon => coupon.Code);
+
+        foreach (var couponCode in rejectedCouponCodes)
         {
             if (cart.Messages.Any(message => string.Equals(message.Code, "coupon_rejected", StringComparison.OrdinalIgnoreCase)
-                && message.Content?.Contains(coupon.Code, StringComparison.OrdinalIgnoreCase) == true))
+                && message.Content?.Contains(couponCode, StringComparison.OrdinalIgnoreCase) == true))
             {
                 continue;
             }
@@ -1021,7 +1030,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             {
                 Type = "warning",
                 Code = "coupon_rejected",
-                Content = $"Coupon '{coupon.Code}' was not applied.",
+                Content = $"Coupon '{couponCode}' was not applied.",
                 Severity = "warning",
             });
         }
