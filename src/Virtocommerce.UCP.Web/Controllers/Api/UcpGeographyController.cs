@@ -22,10 +22,15 @@ public class UcpGeographyController : ControllerBase
     [ProducesResponseType(typeof(UcpCountriesResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UcpCountriesResponse>> ListCountries(
-        [FromQuery] UcpCountriesQuery query,
+        [FromQuery(Name = "query")] string query,
+        [FromQuery(Name = "limit")] int? limit,
         CancellationToken cancellationToken)
     {
-        return Ok(await _geographyService.ListCountries(query, cancellationToken));
+        return Ok(await _geographyService.ListCountries(new UcpCountriesQuery
+        {
+            Query = query,
+            Limit = limit,
+        }, cancellationToken));
     }
 
     [HttpGet("countries/resolve")]

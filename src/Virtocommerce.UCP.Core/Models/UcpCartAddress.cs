@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Newtonsoft.Json;
 
 namespace Virtocommerce.UCP.Core.Models;
@@ -38,6 +39,7 @@ public class UcpCartAddress
     public string RegionId { get; set; }
 
     [JsonProperty("postal_code")]
+    [JsonPropertyName("postal_code")]
     public string PostalCode { get; set; }
 
     [JsonProperty("country_code")]

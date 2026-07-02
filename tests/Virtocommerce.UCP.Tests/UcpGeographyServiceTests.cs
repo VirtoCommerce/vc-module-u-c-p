@@ -57,6 +57,32 @@ public class UcpGeographyServiceTests
     }
 
     [Fact]
+    public async Task ListCountries_AppliesQueryAndLimit()
+    {
+        var service = CreateService();
+
+        var response = await service.ListCountries(new UcpCountriesQuery
+        {
+            Query = "United",
+            Limit = 2,
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, response.Countries.Count);
+        Assert.All(response.Countries, country => Assert.Contains("United", country.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ResolveCountry_MatchesCommonPartialCountryName()
+    {
+        var service = CreateService();
+
+        var response = await service.ResolveCountry("United States", TestContext.Current.CancellationToken);
+
+        Assert.Equal("USA", response.Country.Id);
+        Assert.Equal("United States of America", response.Country.Name);
+    }
+
+    [Fact]
     public async Task ResolveCountry_Returns404WhenUnknown()
     {
         var service = CreateService();
@@ -94,6 +120,12 @@ public class UcpGeographyServiceTests
                 [
                     new CountryRegion { Id = "WA", Name = "Washington" },
                 ],
+            },
+            new Country
+            {
+                Id = "UMI",
+                Name = "United States Minor Outlying Islands",
+                Regions = [],
             },
         ]), httpContextAccessor);
     }

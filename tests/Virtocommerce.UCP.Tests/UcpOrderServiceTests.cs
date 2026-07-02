@@ -111,6 +111,98 @@ public class UcpOrderServiceTests
         Assert.Equal("order-1", orderService.RequestedIds.Single());
     }
 
+    [Fact]
+    public async Task TrackOrder_ByOrderId_ReturnsNotFoundWhenBuyerDoesNotMatch()
+    {
+        var orderService = new StubCustomerOrderService(CreateOrder("order-1", "cart-1", "buyer-1"));
+        var service = CreateService(orderService: orderService);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrder(new UcpOrderTrackingRequest
+        {
+            OrderId = "order-1",
+            Context = new UcpCartContext { BuyerId = "buyer-2" },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.OrderNotFound, exception.Code);
+        Assert.Equal(404, exception.StatusCode);
+    }
+
+    [Fact]
+    public async Task TrackOrder_ByOrderId_ReturnsNotFoundWithoutBuyerScope()
+    {
+        var orderService = new StubCustomerOrderService(CreateOrder("order-1", "cart-1", "buyer-1"));
+        var service = CreateService(orderService: orderService);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrder(new UcpOrderTrackingRequest
+        {
+            OrderId = "order-1",
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.OrderNotFound, exception.Code);
+        Assert.Equal(404, exception.StatusCode);
+        Assert.Empty(orderService.RequestedIds);
+    }
+
+    [Fact]
+    public async Task TrackOrder_ByOrderNumber_SearchesWithinBuyerScope()
+    {
+        var orderSearchService = new StubCustomerOrderSearchService(
+            CreateOrder("order-1", "cart-1", "buyer-1"),
+            CreateOrder("order-2", "cart-2", "buyer-2"));
+        var service = CreateService(orderSearchService: orderSearchService);
+
+        var response = await service.TrackOrder(new UcpOrderTrackingRequest
+        {
+            OrderNumber = "CO123",
+            Context = new UcpCartContext { BuyerId = "buyer-2" },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("order-2", response.Order.Id);
+        var criteria = orderSearchService.Criteria.Single();
+        Assert.Equal("buyer-2", criteria.CustomerId);
+        Assert.Equal("CO123", criteria.Number);
+        Assert.Equal(CustomerOrderResponseGroup.Full.ToString(), criteria.ResponseGroup);
+    }
+
+    [Fact]
+    public async Task TrackOrder_ByOrderNumber_ReturnsNotFoundWithoutBuyerScope()
+    {
+        var orderSearchService = new StubCustomerOrderSearchService(CreateOrder("order-1", "cart-1", "buyer-1"));
+        var service = CreateService(orderSearchService: orderSearchService);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.TrackOrder(new UcpOrderTrackingRequest
+        {
+            OrderNumber = "CO123",
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.OrderNotFound, exception.Code);
+        Assert.Equal(404, exception.StatusCode);
+        Assert.Empty(orderSearchService.Criteria);
+    }
+
+    [Fact]
+    public async Task TrackOrder_ComputesLineTotalsWhenExtendedPriceIsMissing()
+    {
+        var order = CreateOrder("order-1", "cart-1", "buyer-1");
+        order.SubTotal = 2598m;
+        order.Total = 2598m;
+        var orderItem = order.Items.Single();
+        orderItem.Quantity = 2;
+        orderItem.ExtendedPrice = 0m;
+        var orderService = new StubCustomerOrderService(order);
+        var service = CreateService(orderService: orderService);
+
+        var response = await service.TrackOrder(new UcpOrderTrackingRequest
+        {
+            OrderId = "order-1",
+            Context = new UcpCartContext { BuyerId = "buyer-1" },
+        }, TestContext.Current.CancellationToken);
+
+        var lineItem = Assert.Single(response.Order.LineItems);
+        Assert.Equal(129900, lineItem.PlacedPrice.Amount);
+        Assert.Equal(259800, lineItem.LineTotal.Amount);
+    }
+
     private static UcpOrderService CreateService(
         ICustomerOrderService orderService = null,
         ICustomerOrderSearchService orderSearchService = null)

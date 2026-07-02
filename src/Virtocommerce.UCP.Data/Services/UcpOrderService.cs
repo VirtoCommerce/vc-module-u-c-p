@@ -88,11 +88,16 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
 
     private async Task<CustomerOrder> FindOrderByIdOrNumber(OrderExecutionRequest request)
     {
+        if (!HasOrderScope(request))
+        {
+            return null;
+        }
+
         if (!string.IsNullOrWhiteSpace(request.OrderId))
         {
             var orders = await _customerOrderService.GetAsync([request.OrderId], OrderResponseGroup, clone: false);
             var order = orders.FirstOrDefault();
-            if (order != null)
+            if (IsOrderInScope(order, request))
             {
                 return order;
             }
@@ -106,6 +111,8 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
 
         var result = await _customerOrderSearchService.SearchAsync(new CustomerOrderSearchCriteria
         {
+            CustomerId = request.UserId,
+            OrganizationId = request.OrganizationId,
             Number = number,
             Take = 1,
             ResponseGroup = OrderResponseGroup,
@@ -179,7 +186,13 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
     protected virtual IList<UcpOrderLineItem> MapLineItems(IEnumerable<LineItem> items, string currency)
     {
         return (items ?? [])
-            .Select(item => new UcpOrderLineItem
+            .Select(item =>
+            {
+                var itemCurrency = FirstNotEmpty(item.Currency, currency);
+                var placedPrice = item.PlacedPrice != 0 ? item.PlacedPrice : item.Price;
+                var lineTotal = item.ExtendedPrice != 0 ? item.ExtendedPrice : placedPrice * item.Quantity;
+
+                return new UcpOrderLineItem
             {
                 Id = item.Id,
                 ProductId = item.ProductId,
@@ -188,13 +201,30 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
                 Status = item.Status,
                 ImageUrl = item.ImageUrl,
                 Quantity = item.Quantity,
-                UnitPrice = CreateMoney(item.Price, FirstNotEmpty(item.Currency, currency)),
-                PlacedPrice = CreateMoney(item.PlacedPrice, FirstNotEmpty(item.Currency, currency)),
-                LineTotal = CreateMoney(item.ExtendedPrice, FirstNotEmpty(item.Currency, currency)),
-                DiscountTotal = CreateMoney(item.DiscountTotal, FirstNotEmpty(item.Currency, currency)),
-                TaxTotal = CreateMoney(item.TaxTotal, FirstNotEmpty(item.Currency, currency)),
+                UnitPrice = CreateMoney(item.Price, itemCurrency),
+                PlacedPrice = CreateMoney(placedPrice, itemCurrency),
+                LineTotal = CreateMoney(lineTotal, itemCurrency),
+                DiscountTotal = CreateMoney(item.DiscountTotal, itemCurrency),
+                TaxTotal = CreateMoney(item.TaxTotal, itemCurrency),
+            };
             })
             .ToList();
+    }
+
+    private static bool HasOrderScope(OrderExecutionRequest request)
+    {
+        return !string.IsNullOrWhiteSpace(request.UserId) || !string.IsNullOrWhiteSpace(request.OrganizationId);
+    }
+
+    private static bool IsOrderInScope(CustomerOrder order, OrderExecutionRequest request)
+    {
+        if (order == null || !HasOrderScope(request))
+        {
+            return false;
+        }
+
+        return (string.IsNullOrWhiteSpace(request.UserId) || string.Equals(order.CustomerId, request.UserId, StringComparison.OrdinalIgnoreCase))
+            && (string.IsNullOrWhiteSpace(request.OrganizationId) || string.Equals(order.OrganizationId, request.OrganizationId, StringComparison.OrdinalIgnoreCase));
     }
 
     protected virtual IList<UcpOrderShipment> MapShipments(IEnumerable<Shipment> shipments, string currency)

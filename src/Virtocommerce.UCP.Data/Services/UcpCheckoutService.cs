@@ -315,8 +315,39 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
 
     protected virtual UcpCheckoutAddress MergeAddress(UcpCheckoutAddress requestedAddress, UcpCart cart, string addressType)
     {
-        return ToCheckoutAddress(GetCartCheckoutAddress(cart, addressType))
-            ?? requestedAddress;
+        return MergeAddress(ToCheckoutAddress(GetCartCheckoutAddress(cart, addressType)), requestedAddress);
+    }
+
+    protected virtual UcpCheckoutAddress MergeAddress(UcpCheckoutAddress cartAddress, UcpCheckoutAddress requestedAddress)
+    {
+        if (cartAddress == null)
+        {
+            return requestedAddress;
+        }
+
+        if (requestedAddress == null)
+        {
+            return cartAddress;
+        }
+
+        return new UcpCheckoutAddress
+        {
+            Id = FirstNotEmpty(cartAddress.Id, requestedAddress.Id),
+            Name = FirstNotEmpty(cartAddress.Name, requestedAddress.Name),
+            Organization = FirstNotEmpty(cartAddress.Organization, requestedAddress.Organization),
+            FirstName = FirstNotEmpty(cartAddress.FirstName, requestedAddress.FirstName),
+            LastName = FirstNotEmpty(cartAddress.LastName, requestedAddress.LastName),
+            Line1 = FirstNotEmpty(cartAddress.Line1, requestedAddress.Line1),
+            Line2 = FirstNotEmpty(cartAddress.Line2, requestedAddress.Line2),
+            City = FirstNotEmpty(cartAddress.City, requestedAddress.City),
+            Region = FirstNotEmpty(cartAddress.Region, requestedAddress.Region),
+            RegionId = FirstNotEmpty(cartAddress.RegionId, requestedAddress.RegionId),
+            PostalCode = FirstNotEmpty(cartAddress.PostalCode, requestedAddress.PostalCode),
+            CountryCode = FirstNotEmpty(cartAddress.CountryCode, requestedAddress.CountryCode),
+            CountryName = FirstNotEmpty(cartAddress.CountryName, requestedAddress.CountryName),
+            Phone = FirstNotEmpty(cartAddress.Phone, requestedAddress.Phone),
+            Email = FirstNotEmpty(cartAddress.Email, requestedAddress.Email),
+        };
     }
 
     protected virtual UcpCartAddress GetCartCheckoutAddress(UcpCart cart, string addressType)

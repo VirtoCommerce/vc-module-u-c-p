@@ -160,8 +160,8 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(currentCart, "customerId"));
         cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(currentCart, "organizationId"));
 
-        var desiredItems = request.LineItems ?? [];
         var currentItems = ReadCartLineItems(currentCart);
+        var desiredItems = ConsolidateDesiredItems(request.LineItems ?? [], currentItems);
         var cartElement = await RemoveMissingItems(currentCart, cartRequest, currentItems, desiredItems, cancellationToken);
         cartElement = await ApplyDesiredItems(cartId, cartElement, cartRequest, currentItems, desiredItems, cancellationToken);
         cartElement = await ApplyCoupons(cartElement, cartRequest, currentCart, request.Coupons, cancellationToken);
@@ -186,6 +186,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         cartRequest.UserId = FirstNotEmpty(cartRequest.UserId, ReadString(cartElement, "customerId"));
         cartRequest.OrganizationId = FirstNotEmpty(cartRequest.OrganizationId, ReadString(cartElement, "organizationId"));
 
+        var currentCart = ReadCart(cartElement);
         var shippingAddress = await PrepareAddress(request.ShippingAddress, request.Buyer, cancellationToken);
         var billingAddress = await PrepareAddress(request.BillingAddress, request.Buyer, cancellationToken);
 
@@ -193,18 +194,20 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateRecipientName(shippingAddress, "shipping_address");
 
+            var cartAddress = WithAddressId(shippingAddress, GetExistingCartAddressId(currentCart, "shipping"));
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateShippingAddress",
                 cartRequest,
-                BuildAddressCommand(cartRequest, shippingAddress, ShippingAddressType),
+                BuildAddressCommand(cartRequest, cartAddress, ShippingAddressType),
                 cancellationToken);
 
+            var shipmentAddress = WithAddressId(shippingAddress, GetExistingShipmentAddressId(currentCart) ?? cartAddress.Id);
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartShipment",
                 "UcpAddOrUpdateShipmentAddress",
                 cartRequest,
-                BuildShipmentCommand(cartRequest, shippingAddress, ReadFirstArrayObjectString(cartElement, "shipments", "id")),
+                BuildShipmentCommand(cartRequest, shipmentAddress, ReadFirstArrayObjectString(cartElement, "shipments", "id") ?? GetExistingShipmentId(currentCart)),
                 cancellationToken);
         }
 
@@ -212,18 +215,20 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         {
             ValidateRecipientName(billingAddress, "billing_address");
 
+            var cartAddress = WithAddressId(billingAddress, GetExistingCartAddressId(currentCart, "billing"));
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartAddress",
                 "UcpAddOrUpdateBillingAddress",
                 cartRequest,
-                BuildAddressCommand(cartRequest, billingAddress, BillingAddressType),
+                BuildAddressCommand(cartRequest, cartAddress, BillingAddressType),
                 cancellationToken);
 
+            var paymentAddress = WithAddressId(billingAddress, GetExistingPaymentAddressId(currentCart) ?? cartAddress.Id);
             cartElement = await ExecuteCartMutation(
                 "addOrUpdateCartPayment",
                 "UcpAddOrUpdatePaymentAddress",
                 cartRequest,
-                BuildPaymentCommand(cartRequest, billingAddress, ReadFirstArrayObjectString(cartElement, "payments", "id")),
+                BuildPaymentCommand(cartRequest, paymentAddress, ReadFirstArrayObjectString(cartElement, "payments", "id") ?? GetExistingPaymentId(currentCart)),
                 cancellationToken);
         }
 
@@ -341,6 +346,58 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         }
 
         return cartElement;
+    }
+
+    protected virtual IList<UcpCartLineItemRequest> ConsolidateDesiredItems(
+        IEnumerable<UcpCartLineItemRequest> desiredItems,
+        IEnumerable<UcpCartLineItem> currentItems)
+    {
+        var result = new List<UcpCartLineItemRequest>();
+        var byProductId = new Dictionary<string, UcpCartLineItemRequest>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var desiredItem in desiredItems ?? [])
+        {
+            if (desiredItem == null)
+            {
+                continue;
+            }
+
+            var currentItem = ResolveCurrentItemForConsolidation(desiredItem, currentItems);
+            var productId = FirstNotEmpty(desiredItem.ProductId, currentItem?.ProductId);
+            if (string.IsNullOrWhiteSpace(productId))
+            {
+                result.Add(desiredItem);
+                continue;
+            }
+
+            if (!byProductId.TryGetValue(productId, out var consolidated))
+            {
+                consolidated = new UcpCartLineItemRequest
+                {
+                    Id = currentItem?.Id ?? desiredItem.Id,
+                    ProductId = productId,
+                    Quantity = desiredItem.Quantity,
+                };
+                byProductId[productId] = consolidated;
+                result.Add(consolidated);
+                continue;
+            }
+
+            consolidated.Quantity += desiredItem.Quantity;
+            consolidated.Id = FirstNotEmpty(consolidated.Id, currentItem?.Id, desiredItem.Id);
+        }
+
+        return result;
+    }
+
+    protected virtual UcpCartLineItem ResolveCurrentItemForConsolidation(UcpCartLineItemRequest desiredItem, IEnumerable<UcpCartLineItem> currentItems)
+    {
+        if (desiredItem == null || string.IsNullOrWhiteSpace(desiredItem.Id))
+        {
+            return null;
+        }
+
+        return currentItems.FirstOrDefault(item => string.Equals(item.Id, desiredItem.Id, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<JsonElement> ApplyDesiredItems(
@@ -591,8 +648,8 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         AddIfNotEmpty(result, "line1", address.Line1);
         AddIfNotEmpty(result, "line2", address.Line2);
         AddIfNotEmpty(result, "city", address.City);
-        AddIfNotEmpty(result, "regionName", address.Region);
-        AddIfNotEmpty(result, "regionId", address.RegionId);
+        result["regionName"] = address.Region ?? string.Empty;
+        result["regionId"] = address.RegionId ?? string.Empty;
         AddIfNotEmpty(result, "countryCode", address.CountryCode);
         AddIfNotEmpty(result, "countryName", address.CountryName);
         AddIfNotEmpty(result, "phone", address.Phone);
@@ -811,6 +868,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         cart.ContinueUrl = BuildContinueUrl(cart.Id);
         cart.Messages = ReadMessages(element);
+        AddCouponMessages(cart);
 
         return cart;
     }
@@ -926,7 +984,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             City = ReadString(address, "city"),
             Region = ReadString(address, "regionName"),
             RegionId = ReadString(address, "regionId"),
-            PostalCode = FirstNotEmpty(ReadString(address, "postalCode"), ReadString(address, "zip")),
+            PostalCode = FirstNotEmpty(ReadString(address, "postalCode"), ReadString(address, "zip"), ReadString(address, "postal_code")),
             CountryCode = ReadString(address, "countryCode"),
             CountryName = ReadString(address, "countryName"),
             Phone = ReadString(address, "phone"),
@@ -952,6 +1010,30 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         AddMessages(messages, element, "validationErrors", "error");
         AddMessages(messages, element, "warnings", "warning");
         return messages;
+    }
+
+    protected virtual void AddCouponMessages(UcpCart cart)
+    {
+        var rejectedCouponCodes = cart.Coupons
+            .Where(coupon => !coupon.Applied && !string.IsNullOrWhiteSpace(coupon.Code))
+            .Select(coupon => coupon.Code);
+
+        foreach (var couponCode in rejectedCouponCodes)
+        {
+            if (cart.Messages.Any(message => string.Equals(message.Code, "coupon_rejected", StringComparison.OrdinalIgnoreCase)
+                && message.Content?.Contains(couponCode, StringComparison.OrdinalIgnoreCase) == true))
+            {
+                continue;
+            }
+
+            cart.Messages.Add(new UcpMessage
+            {
+                Type = "warning",
+                Code = "coupon_rejected",
+                Content = $"Coupon '{couponCode}' was not applied.",
+                Severity = "warning",
+            });
+        }
     }
 
     protected virtual void AddMessages(IList<UcpMessage> messages, JsonElement element, string propertyName, string type)
@@ -1071,6 +1153,43 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 
+    protected static string GetExistingCartAddressId(UcpCart cart, string addressType)
+    {
+        return cart?.Addresses.LastOrDefault(x => string.Equals(x.AddressType, addressType, StringComparison.OrdinalIgnoreCase))?.Id;
+    }
+
+    protected static string GetExistingShipmentId(UcpCart cart)
+    {
+        return cart?.Shipments.LastOrDefault()?.Id;
+    }
+
+    protected static string GetExistingShipmentAddressId(UcpCart cart)
+    {
+        return cart?.Shipments.LastOrDefault(x => x.DeliveryAddress != null)?.DeliveryAddress?.Id;
+    }
+
+    protected static string GetExistingPaymentId(UcpCart cart)
+    {
+        return cart?.Payments.LastOrDefault()?.Id;
+    }
+
+    protected static string GetExistingPaymentAddressId(UcpCart cart)
+    {
+        return cart?.Payments.LastOrDefault(x => x.BillingAddress != null)?.BillingAddress?.Id;
+    }
+
+    protected UcpCheckoutAddress WithAddressId(UcpCheckoutAddress address, string id)
+    {
+        if (address == null || string.IsNullOrWhiteSpace(id) || !string.IsNullOrWhiteSpace(address.Id))
+        {
+            return address;
+        }
+
+        var result = CloneAddress(address);
+        result.Id = id;
+        return result;
+    }
+
     protected const string MoneyFields = """
           amount
           formattedAmount
@@ -1127,6 +1246,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
           countryName
           regionId
           regionName
+          postalCode
           zip
           phone
           email
@@ -1153,6 +1273,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             countryName
             regionId
             regionName
+            postalCode
             zip
             phone
             email
@@ -1179,6 +1300,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             countryName
             regionId
             regionName
+            postalCode
             zip
             phone
             email
