@@ -1,11 +1,4 @@
 {
-  "ucp": {
-    "blades": {
-      "hello-world": {
-        "title": "Hello world blade"
-      }
-    }
-  },
   "permissions": {
     "ucp:access": "Open UCP menu",
     "ucp:create": "Create UCP related data",
