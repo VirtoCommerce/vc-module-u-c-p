@@ -150,6 +150,7 @@ The MCP server exposes typed UCP commerce tools for the Virto Commerce storefron
 - `update_cart`
 - `create_checkout`
 - `update_checkout`
+- `checkout_and_handoff`
 - `get_payment_handlers`
 - `handoff_checkout`
 - `list_countries`
@@ -256,6 +257,7 @@ The current checkout flow is hosted-only:
 - `create_checkout` creates a checkout snapshot from the cart.
 - If the request contains `shipping_address` or `billing_address`, the module applies them to XCart before creating the snapshot.
 - `update_checkout` updates address hints before payment and applies addresses to XCart.
+- `checkout_and_handoff` creates the checkout snapshot and immediately returns the hosted checkout `continue_url`; MCP clients should prefer it when the buyer is ready to pay or continue to storefront checkout.
 - `handoff_checkout` returns a `continue_url` with an opaque `ucp_session`.
 - `storefront_restore` validates `ucp_session`, reads the session payload from distributed cache, checks expiration, and returns cart and checkout context to the storefront.
 - Shipping method and payment details are completed in storefront checkout.

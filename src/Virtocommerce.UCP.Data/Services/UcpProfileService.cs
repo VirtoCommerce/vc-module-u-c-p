@@ -50,6 +50,7 @@ public class UcpProfileService : IUcpProfileService
         ModuleConstants.McpTools.UpdateCart,
         ModuleConstants.McpTools.CreateCheckout,
         ModuleConstants.McpTools.UpdateCheckout,
+        ModuleConstants.McpTools.CheckoutAndHandoff,
         ModuleConstants.McpTools.GetPaymentHandlers,
         ModuleConstants.McpTools.HandoffCheckout,
         ModuleConstants.McpTools.TrackOrder,
@@ -70,6 +71,7 @@ public class UcpProfileService : IUcpProfileService
         "Natural-language addresses should be mapped to shipping_address fields such as country_code, country_name, city, line1, line2, region, postal_code, phone, and email.",
         "default_store_id or store.id from discovery is the default store_id for catalog, cart, and checkout tools. Multiple stores without default_store_id require an explicit store selection.",
         "Address changes after checkout or handoff require update_checkout followed by a new handoff_checkout URL.",
+        "When the buyer is ready to pay or continue to hosted checkout, prefer checkout_and_handoff so the response includes the final continue_url.",
         "After hosted checkout, track_order can use the original cart_id before an order_id is available.",
     ];
 
@@ -97,6 +99,14 @@ public class UcpProfileService : IUcpProfileService
             ModuleConstants.Capabilities.Checkout,
             "available",
             "Update checkout address data before payment. A new handoff URL is required after shipping_address or billing_address changes."
+        ),
+        (
+            ModuleConstants.McpTools.CheckoutAndHandoff,
+            "MCP",
+            ModuleConstants.Endpoints.Mcp,
+            ModuleConstants.Capabilities.Checkout,
+            "available",
+            "Create checkout and immediately create the hosted checkout handoff URL. Prefer this when the buyer is ready to pay or continue to storefront checkout."
         ),
         (ModuleConstants.McpTools.GetPaymentHandlers, "GET", ModuleConstants.Endpoints.CheckoutPaymentHandlers, ModuleConstants.Capabilities.Checkout, "available", "Read supported payment handlers. hosted_checkout is the current available handler."),
         (

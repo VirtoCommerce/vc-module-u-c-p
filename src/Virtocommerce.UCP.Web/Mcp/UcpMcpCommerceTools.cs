@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using ModelContextProtocol.Server;
@@ -31,7 +32,9 @@ public static class UcpMcpCommerceTools
         string store_id = null,
         string currency = null,
         string language = null,
-        int limit = 5,
+        long? price_min = null,
+        long? price_max = null,
+        int limit = 10,
         CancellationToken cancellationToken = default)
     {
         return Execute(async () =>
@@ -43,6 +46,16 @@ public static class UcpMcpCommerceTools
                 Currency = currency,
                 Language = language,
                 Limit = limit,
+                Filters = price_min.HasValue || price_max.HasValue
+                    ? new UcpSearchFilters
+                    {
+                        Price = new UcpPriceFilter
+                        {
+                            Min = price_min,
+                            Max = price_max,
+                        },
+                    }
+                    : null,
                 Pagination = new UcpPaginationRequest { Limit = limit },
                 Context = new UcpCatalogContext
                 {
@@ -62,14 +75,27 @@ public static class UcpMcpCommerceTools
     public static Task<object> GetProduct(
         IUcpProfileService profileService,
         IUcpCatalogService catalogService,
-        [Description("Product id returned by search_products.")] string product_id,
+        [Description("Stable UCP product id returned by search_products.")] string id = null,
+        [Description("Alias for id.")] string product_id = null,
         string store_id = null,
         string currency = null,
         string language = null,
         CancellationToken cancellationToken = default)
     {
-        return Execute(async () =>
+        return Execute<object>(async () =>
         {
+            var productId = FirstNotEmpty(product_id, id);
+            if (string.IsNullOrWhiteSpace(productId))
+            {
+                return new UcpMcpToolError
+                {
+                    IsError = true,
+                    Code = ModuleConstants.ErrorCodes.InvalidRequest,
+                    StatusCode = 400,
+                    Message = "id is required.",
+                };
+            }
+
             var request = new UcpCatalogSearchRequest
             {
                 StoreId = store_id,
@@ -84,7 +110,7 @@ public static class UcpMcpCommerceTools
             };
             ApplyCatalogDefaults(request, await profileService.GetProfile(cancellationToken));
 
-            return await catalogService.GetProduct(product_id, request, cancellationToken);
+            return await catalogService.GetProduct(productId, request, cancellationToken);
         });
     }
 
@@ -125,14 +151,17 @@ public static class UcpMcpCommerceTools
         string organization_id = null,
         string cart_name = null,
         string cart_type = null,
+        string cursor = null,
         int limit = 10,
+        string sort = null,
         CancellationToken cancellationToken = default)
     {
         return Execute(async () =>
         {
             var request = new UcpCartListRequest
             {
-                Pagination = new UcpPaginationRequest { Limit = limit },
+                Pagination = new UcpPaginationRequest { Cursor = cursor, Limit = limit },
+                Sort = sort,
                 Context = CreateCartContext(store_id, currency, language, buyer_id, organization_id, cart_name, cart_type),
             };
             ApplyCartContextDefaults(request.Context, await profileService.GetProfile(cancellationToken));
@@ -175,12 +204,14 @@ public static class UcpMcpCommerceTools
         string language = null,
         string buyer_id = null,
         string organization_id = null,
+        string cart_name = null,
+        string cart_type = null,
         IList<string> coupons = null,
         CancellationToken cancellationToken = default)
     {
         return Execute(async () =>
         {
-            var request = CreateCartRequest(store_id, currency, language, buyer_id, organization_id, null, null, line_items, coupons);
+            var request = CreateCartRequest(store_id, currency, language, buyer_id, organization_id, cart_name, cart_type, line_items, coupons);
             ApplyCartDefaults(request, await profileService.GetProfile(cancellationToken));
 
             return await cartService.UpdateCart(cart_id, request, cancellationToken);
@@ -199,6 +230,9 @@ public static class UcpMcpCommerceTools
         string buyer_id = null,
         string organization_id = null,
         UcpCheckoutBuyer buyer = null,
+        string buyer_email = null,
+        string buyer_name = null,
+        string buyer_phone = null,
         UcpCheckoutAddress shipping_address = null,
         UcpCheckoutAddress billing_address = null,
         string payment_handler = null,
@@ -207,7 +241,7 @@ public static class UcpMcpCommerceTools
     {
         return Execute(async () =>
         {
-            var request = CreateCheckoutRequest(cart_id, store_id, currency, language, buyer_id, organization_id, buyer, shipping_address, billing_address, payment_handler, notes);
+            var request = CreateCheckoutRequest(cart_id, store_id, currency, language, buyer_id, organization_id, buyer, buyer_email, buyer_name, buyer_phone, shipping_address, billing_address, payment_handler, notes);
             ApplyCheckoutDefaults(request, await profileService.GetProfile(cancellationToken));
 
             return await checkoutService.CreateCheckout(request, cancellationToken);
@@ -220,12 +254,16 @@ public static class UcpMcpCommerceTools
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
         string checkout_id,
+        string cart_id = null,
         string store_id = null,
         string currency = null,
         string language = null,
         string buyer_id = null,
         string organization_id = null,
         UcpCheckoutBuyer buyer = null,
+        string buyer_email = null,
+        string buyer_name = null,
+        string buyer_phone = null,
         UcpCheckoutAddress shipping_address = null,
         UcpCheckoutAddress billing_address = null,
         string payment_handler = null,
@@ -234,10 +272,21 @@ public static class UcpMcpCommerceTools
     {
         return Execute(async () =>
         {
-            var request = CreateCheckoutRequest(checkout_id, store_id, currency, language, buyer_id, organization_id, buyer, shipping_address, billing_address, payment_handler, notes);
+            var request = CreateCheckoutRequest(FirstNotEmpty(cart_id, checkout_id), store_id, currency, language, buyer_id, organization_id, buyer, buyer_email, buyer_name, buyer_phone, shipping_address, billing_address, payment_handler, notes);
             ApplyCheckoutDefaults(request, await profileService.GetProfile(cancellationToken));
 
-            return await checkoutService.UpdateCheckout(checkout_id, request, cancellationToken);
+            var checkout = await checkoutService.UpdateCheckout(checkout_id, request, cancellationToken);
+
+            return new UcpMcpUpdateCheckoutResult
+            {
+                Result = checkout,
+                NextStep = new UcpMcpNextToolStep
+                {
+                    Tool = ModuleConstants.McpTools.HandoffCheckout,
+                    Reason = "Address was updated; create a fresh hosted checkout URL with the latest address snapshot.",
+                    Arguments = CreateHandoffNextStepArguments(checkout_id, request),
+                },
+            };
         });
     }
 
@@ -251,18 +300,21 @@ public static class UcpMcpCommerceTools
         return Execute(() => checkoutService.GetPaymentHandlers(checkout_id, cancellationToken));
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.HandoffCheckout, ReadOnly = false, Destructive = false)]
-    [Description("Create hosted checkout handoff URL in this Virto Commerce storefront.")]
-    public static Task<object> HandoffCheckout(
+    [McpServerTool(Name = ModuleConstants.McpTools.CheckoutAndHandoff, ReadOnly = false, Destructive = false)]
+    [Description("Create checkout and immediately create a hosted checkout handoff URL in this Virto Commerce storefront.")]
+    public static Task<object> CheckoutAndHandoff(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
-        string checkout_id,
+        string cart_id,
         string store_id = null,
         string currency = null,
         string language = null,
         string buyer_id = null,
         string organization_id = null,
         UcpCheckoutBuyer buyer = null,
+        string buyer_email = null,
+        string buyer_name = null,
+        string buyer_phone = null,
         UcpCheckoutAddress shipping_address = null,
         UcpCheckoutAddress billing_address = null,
         string payment_handler = null,
@@ -271,10 +323,82 @@ public static class UcpMcpCommerceTools
     {
         return Execute(async () =>
         {
-            var request = CreateCheckoutRequest(checkout_id, store_id, currency, language, buyer_id, organization_id, buyer, shipping_address, billing_address, payment_handler, notes);
+            var request = CreateCheckoutRequest(cart_id, store_id, currency, language, buyer_id, organization_id, buyer, buyer_email, buyer_name, buyer_phone, shipping_address, billing_address, payment_handler, notes);
             ApplyCheckoutDefaults(request, await profileService.GetProfile(cancellationToken));
 
-            return await checkoutService.HandoffCheckout(checkout_id, request, cancellationToken);
+            var checkout = await checkoutService.CreateCheckout(request, cancellationToken);
+            var checkoutId = FirstNotEmpty(checkout?.Checkout?.Id, checkout?.Checkout?.CartId, cart_id);
+            request.CartId = FirstNotEmpty(request.CartId, checkout?.Checkout?.CartId, cart_id);
+
+            var handoff = await checkoutService.HandoffCheckout(checkoutId, request, cancellationToken);
+            var effectiveBuyerId = FirstNotEmpty(checkout?.Checkout?.Buyer?.Id, checkout?.Checkout?.Cart?.BuyerId, buyer_id);
+            var effectiveLanguage = FirstNotEmpty(request.Language, request.Context?.Language);
+
+            return new UcpMcpCheckoutAndHandoffResult
+            {
+                Ok = true,
+                CartId = request.CartId,
+                BuyerId = effectiveBuyerId,
+                Checkout = checkout,
+                Handoff = handoff,
+                ContinueUrl = handoff?.Checkout?.ContinueUrl,
+                NextStepAfterPayment = new UcpMcpNextToolStep
+                {
+                    Tool = ModuleConstants.McpTools.TrackOrder,
+                    Arguments = CreateTrackOrderArguments(request.CartId, effectiveBuyerId, request.OrganizationId, effectiveLanguage),
+                },
+            };
+        });
+    }
+
+    [McpServerTool(Name = ModuleConstants.McpTools.HandoffCheckout, ReadOnly = false, Destructive = false)]
+    [Description("Create hosted checkout handoff URL in this Virto Commerce storefront.")]
+    public static Task<object> HandoffCheckout(
+        IUcpProfileService profileService,
+        IUcpCheckoutService checkoutService,
+        string checkout_id,
+        string cart_id = null,
+        string store_id = null,
+        string currency = null,
+        string language = null,
+        string buyer_id = null,
+        string organization_id = null,
+        UcpCheckoutBuyer buyer = null,
+        string buyer_email = null,
+        string buyer_name = null,
+        string buyer_phone = null,
+        UcpCheckoutAddress shipping_address = null,
+        UcpCheckoutAddress billing_address = null,
+        string payment_handler = null,
+        string notes = null,
+        CancellationToken cancellationToken = default)
+    {
+        return Execute(async () =>
+        {
+            var request = CreateCheckoutRequest(FirstNotEmpty(cart_id, checkout_id), store_id, currency, language, buyer_id, organization_id, buyer, buyer_email, buyer_name, buyer_phone, shipping_address, billing_address, payment_handler, notes);
+            ApplyCheckoutDefaults(request, await profileService.GetProfile(cancellationToken));
+
+            var handoff = await checkoutService.HandoffCheckout(checkout_id, request, cancellationToken);
+            var effectiveBuyerId = FirstNotEmpty(handoff?.Checkout?.Buyer?.Id, handoff?.Checkout?.Cart?.BuyerId, buyer_id);
+            var effectiveLanguage = FirstNotEmpty(request.Language, request.Context?.Language);
+
+            return new UcpMcpHandoffCheckoutResult
+            {
+                Result = handoff,
+                LastCheckout = new UcpMcpLastCheckout
+                {
+                    CartId = request.CartId,
+                    BuyerId = effectiveBuyerId,
+                    OrganizationId = request.OrganizationId,
+                    Language = effectiveLanguage,
+                    CheckoutId = checkout_id,
+                },
+                NextStepAfterPayment = new UcpMcpNextToolStep
+                {
+                    Tool = ModuleConstants.McpTools.TrackOrder,
+                    Arguments = CreateTrackOrderArguments(request.CartId, effectiveBuyerId, request.OrganizationId, effectiveLanguage),
+                },
+            };
         });
     }
 
@@ -391,11 +515,16 @@ public static class UcpMcpCommerceTools
         string buyerId,
         string organizationId,
         UcpCheckoutBuyer buyer,
+        string buyerEmail,
+        string buyerName,
+        string buyerPhone,
         UcpCheckoutAddress shippingAddress,
         UcpCheckoutAddress billingAddress,
         string paymentHandler,
         string notes)
     {
+        buyer = MergeBuyerHints(buyer, buyerId, buyerEmail, buyerName, buyerPhone);
+
         return new UcpCheckoutRequest
         {
             CartId = cartId,
@@ -411,6 +540,71 @@ public static class UcpMcpCommerceTools
             Notes = notes,
             Context = CreateCartContext(storeId, currency, language, buyerId, organizationId, null, null),
         };
+    }
+
+    private static UcpCheckoutBuyer MergeBuyerHints(
+        UcpCheckoutBuyer buyer,
+        string buyerId,
+        string buyerEmail,
+        string buyerName,
+        string buyerPhone)
+    {
+        if (buyer == null && string.IsNullOrWhiteSpace(buyerId) && string.IsNullOrWhiteSpace(buyerEmail) && string.IsNullOrWhiteSpace(buyerName) && string.IsNullOrWhiteSpace(buyerPhone))
+        {
+            return null;
+        }
+
+        buyer ??= new UcpCheckoutBuyer();
+        buyer.Id = FirstNotEmpty(buyer.Id, buyerId);
+        buyer.Email = FirstNotEmpty(buyer.Email, buyerEmail);
+        buyer.Name = FirstNotEmpty(buyer.Name, buyerName);
+        buyer.Phone = FirstNotEmpty(buyer.Phone, buyerPhone);
+
+        return buyer;
+    }
+
+    private static IDictionary<string, object> CreateTrackOrderArguments(string cartId, string buyerId, string organizationId, string language)
+    {
+        var arguments = new Dictionary<string, object>();
+        AddNextStepString(arguments, "cart_id", cartId);
+        AddNextStepString(arguments, "buyer_id", buyerId);
+        AddNextStepString(arguments, "organization_id", organizationId);
+        AddNextStepString(arguments, "language", language);
+
+        return arguments;
+    }
+
+    private static IDictionary<string, object> CreateHandoffNextStepArguments(string checkoutId, UcpCheckoutRequest request)
+    {
+        var arguments = new Dictionary<string, object>();
+        AddNextStepString(arguments, "checkout_id", checkoutId);
+        AddNextStepString(arguments, "cart_id", request.CartId);
+        AddNextStepString(arguments, "store_id", request.StoreId);
+        AddNextStepString(arguments, "currency", request.Currency);
+        AddNextStepString(arguments, "language", request.Language);
+        AddNextStepString(arguments, "buyer_id", request.BuyerId);
+        AddNextStepString(arguments, "organization_id", request.OrganizationId);
+        AddNextStepObject(arguments, "shipping_address", request.ShippingAddress);
+        AddNextStepObject(arguments, "billing_address", request.BillingAddress ?? request.ShippingAddress);
+        AddNextStepString(arguments, "payment_handler", FirstNotEmpty(request.PaymentHandler, ModuleConstants.PaymentHandlers.HostedCheckout));
+
+        return arguments;
+    }
+
+    private static void AddNextStepString(IDictionary<string, object> arguments, string name, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            arguments[name] = value;
+        }
+    }
+
+    private static void AddNextStepObject(IDictionary<string, object> arguments, string name, object value)
+    {
+        if (value != null)
+        {
+            arguments[name] = value;
+        }
     }
 
     private static UcpCartContext CreateCartContext(
@@ -534,4 +728,79 @@ public sealed class UcpMcpToolError
     public int StatusCode { get; set; }
 
     public string Message { get; set; }
+}
+
+public sealed class UcpMcpCheckoutAndHandoffResult
+{
+    [JsonPropertyName("ok")]
+    public bool Ok { get; set; }
+
+    [JsonPropertyName("cart_id")]
+    public string CartId { get; set; }
+
+    [JsonPropertyName("buyer_id")]
+    public string BuyerId { get; set; }
+
+    [JsonPropertyName("checkout")]
+    public UcpCheckoutResponse Checkout { get; set; }
+
+    [JsonPropertyName("handoff")]
+    public UcpCheckoutHandoffResponse Handoff { get; set; }
+
+    [JsonPropertyName("continue_url")]
+    public string ContinueUrl { get; set; }
+
+    [JsonPropertyName("next_step_after_payment")]
+    public UcpMcpNextToolStep NextStepAfterPayment { get; set; }
+}
+
+public sealed class UcpMcpUpdateCheckoutResult
+{
+    [JsonPropertyName("result")]
+    public UcpCheckoutResponse Result { get; set; }
+
+    [JsonPropertyName("next_step")]
+    public UcpMcpNextToolStep NextStep { get; set; }
+}
+
+public sealed class UcpMcpHandoffCheckoutResult
+{
+    [JsonPropertyName("result")]
+    public UcpCheckoutHandoffResponse Result { get; set; }
+
+    [JsonPropertyName("last_checkout")]
+    public UcpMcpLastCheckout LastCheckout { get; set; }
+
+    [JsonPropertyName("next_step_after_payment")]
+    public UcpMcpNextToolStep NextStepAfterPayment { get; set; }
+}
+
+public sealed class UcpMcpLastCheckout
+{
+    [JsonPropertyName("cart_id")]
+    public string CartId { get; set; }
+
+    [JsonPropertyName("buyer_id")]
+    public string BuyerId { get; set; }
+
+    [JsonPropertyName("organization_id")]
+    public string OrganizationId { get; set; }
+
+    [JsonPropertyName("language")]
+    public string Language { get; set; }
+
+    [JsonPropertyName("checkout_id")]
+    public string CheckoutId { get; set; }
+}
+
+public sealed class UcpMcpNextToolStep
+{
+    [JsonPropertyName("tool")]
+    public string Tool { get; set; }
+
+    [JsonPropertyName("reason")]
+    public string Reason { get; set; }
+
+    [JsonPropertyName("arguments")]
+    public IDictionary<string, object> Arguments { get; set; } = new Dictionary<string, object>();
 }

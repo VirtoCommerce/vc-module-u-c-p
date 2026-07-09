@@ -10,13 +10,13 @@ public static class ModuleConstants
     public const string Platform = "VirtoCommerce";
     public const string McpInstructions = """
         This MCP endpoint exposes Virto Commerce UCP tools for the storefront/platform where this MCP server is installed.
-        Use typed MCP tools for commerce operations: get_store_capabilities, search_products, get_product, create_cart, list_carts, get_cart, update_cart, create_checkout, update_checkout, get_payment_handlers, handoff_checkout, list_countries, resolve_country, list_regions, and track_order.
+        Use typed MCP tools for commerce operations: get_store_capabilities, search_products, get_product, create_cart, list_carts, get_cart, update_cart, create_checkout, update_checkout, checkout_and_handoff, get_payment_handlers, handoff_checkout, list_countries, resolve_country, list_regions, and track_order.
         Do not pass storefront URLs to MCP tools. This MCP server already represents the target Virto Commerce UCP installation.
         Do not infer another target storefront from the MCP transport URL or user-provided links.
         Commerce tools execute local UCP services directly in this platform process.
         Do not use browser/web/search tools to execute UCP operations when MCP tools are available.
         When store_id, currency, or language are unknown, call get_store_capabilities first and use the default store metadata returned by this installation. If this installation exposes multiple stores without a default, use an explicit store_id from the user or ask the user to choose.
-        For shopping flows, use MCP tools directly: search products, create or update cart, resolve country/regions, create checkout, then handoff checkout.
+        For shopping flows, use MCP tools directly: search products, create or update cart, resolve country/regions, then use checkout_and_handoff when the buyer is ready for hosted checkout.
         Delivery addresses belong in structured shipping_address fields, not notes.
         For hosted checkout, return checkout.continue_url to the buyer and keep cart_id for later track_order.
         """;
@@ -89,6 +89,7 @@ public static class ModuleConstants
         public const string UpdateCart = "update_cart";
         public const string CreateCheckout = "create_checkout";
         public const string UpdateCheckout = "update_checkout";
+        public const string CheckoutAndHandoff = "checkout_and_handoff";
         public const string GetPaymentHandlers = "get_payment_handlers";
         public const string HandoffCheckout = "handoff_checkout";
         public const string TrackOrder = "track_order";
@@ -108,6 +109,7 @@ public static class ModuleConstants
         public const string UpdateCart = "update_cart";
         public const string CreateCheckout = "create_checkout";
         public const string UpdateCheckout = "update_checkout";
+        public const string CheckoutAndHandoff = "checkout_and_handoff";
         public const string GetPaymentHandlers = "get_payment_handlers";
         public const string HandoffCheckout = "handoff_checkout";
         public const string TrackOrder = "track_order";

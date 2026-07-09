@@ -3,12 +3,15 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Virtocommerce.UCP.Core;
 using Virtocommerce.UCP.Core.Options;
 using Virtocommerce.UCP.Core.Services;
 using Virtocommerce.UCP.Data.Services;
 using Virtocommerce.UCP.ExperienceApi;
 using Virtocommerce.UCP.Web.Filters;
+using Virtocommerce.UCP.Web.Mcp;
 using Virtocommerce.UCP.Web.Services;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
@@ -46,7 +49,11 @@ public class Module : IModule, IHasConfiguration
             {
                 options.Stateless = true;
             })
-            .WithToolsFromAssembly();
+            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            });
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();

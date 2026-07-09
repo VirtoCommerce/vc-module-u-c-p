@@ -24,6 +24,7 @@ public class UcpMcpCommerceToolsTests
         Assert.Contains(ModuleConstants.McpTools.UpdateCart, toolNames);
         Assert.Contains(ModuleConstants.McpTools.CreateCheckout, toolNames);
         Assert.Contains(ModuleConstants.McpTools.UpdateCheckout, toolNames);
+        Assert.Contains(ModuleConstants.McpTools.CheckoutAndHandoff, toolNames);
         Assert.Contains(ModuleConstants.McpTools.GetPaymentHandlers, toolNames);
         Assert.Contains(ModuleConstants.McpTools.HandoffCheckout, toolNames);
         Assert.Contains(ModuleConstants.McpTools.ListCountries, toolNames);
@@ -45,6 +46,44 @@ public class UcpMcpCommerceToolsTests
 
         Assert.DoesNotContain("storefront_url", parameterNames);
         Assert.DoesNotContain("storefrontUrl", parameterNames);
+        Assert.DoesNotContain("base_url", parameterNames);
+        Assert.DoesNotContain("baseUrl", parameterNames);
+    }
+
+    [Fact]
+    public void UcpMcpTools_AcceptFrontendMcpCommerceParameters()
+    {
+        var parameterNames = typeof(UcpMcpCommerceTools)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Where(method => method.GetCustomAttribute<McpServerToolAttribute>() != null)
+            .SelectMany(method => method.GetParameters())
+            .Select(parameter => parameter.Name)
+            .ToArray();
+
+        Assert.Contains("price_min", parameterNames);
+        Assert.Contains("price_max", parameterNames);
+        Assert.Contains("cursor", parameterNames);
+        Assert.Contains("sort", parameterNames);
+        Assert.Contains("cart_name", parameterNames);
+        Assert.Contains("cart_type", parameterNames);
+        Assert.Contains("cart_id", parameterNames);
+        Assert.Contains("buyer_email", parameterNames);
+        Assert.Contains("buyer_name", parameterNames);
+        Assert.Contains("buyer_phone", parameterNames);
+    }
+
+    [Fact]
+    public void GetProduct_AcceptsFrontendMcpIdParameter()
+    {
+        var parameterNames = typeof(UcpMcpCommerceTools)
+            .GetMethod(nameof(UcpMcpCommerceTools.GetProduct))
+            ?.GetParameters()
+            .Select(parameter => parameter.Name)
+            .ToArray();
+
+        Assert.NotNull(parameterNames);
+        Assert.Contains("id", parameterNames);
+        Assert.Contains("product_id", parameterNames);
     }
 
     [Fact]
@@ -52,6 +91,7 @@ public class UcpMcpCommerceToolsTests
     {
         Assert.Contains("where this MCP server is installed", ModuleConstants.McpInstructions);
         Assert.Contains("Do not pass storefront URLs", ModuleConstants.McpInstructions);
+        Assert.Contains(ModuleConstants.McpTools.CheckoutAndHandoff, ModuleConstants.McpInstructions);
         Assert.DoesNotContain("McpDefaultStorefrontUrl", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("get_ucp_autodiscovery", ModuleConstants.McpInstructions);
     }
