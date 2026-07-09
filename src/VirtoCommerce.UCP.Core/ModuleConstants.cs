@@ -109,7 +109,7 @@ public static class ModuleConstants
     {
         public static class General
         {
-            public static SettingDescriptor UCPEnabled { get; } = new()
+            public static SettingDescriptor UcpEnabled { get; } = new()
             {
                 Name = "UCP.Enabled",
                 GroupName = "UCP|General",
@@ -121,7 +121,7 @@ public static class ModuleConstants
             {
                 get
                 {
-                    yield return UCPEnabled;
+                    yield return UcpEnabled;
                 }
             }
         }
