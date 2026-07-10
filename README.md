@@ -7,7 +7,7 @@ It also exposes a Streamable HTTP MCP endpoint at `/ucp/mcp`.
 
 ## Overview
 
-`Virtocommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients while delegating commerce behavior to existing Virto Commerce modules.
+`VirtoCommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients while delegating commerce behavior to existing Virto Commerce modules.
 
 The current implementation covers:
 
@@ -29,11 +29,11 @@ Canonical public UCP endpoints are published without the `/api` prefix.
 
 | Project | Purpose |
 | --- | --- |
-| `Virtocommerce.UCP.Core` | Protocol models, service contracts, module constants, options, and errors. |
-| `Virtocommerce.UCP.Data` | Provider-neutral UCP application services and integration logic. |
-| `Virtocommerce.UCP.ExperienceApi` | XAPI schema marker for the module. |
-| `Virtocommerce.UCP.Web` | Module entry point, controllers, filters, GraphQL executor, and DI registrations. |
-| `Virtocommerce.UCP.Tests` | Unit tests for discovery, catalog, cart, checkout handoff, geography, and order tracking behavior. |
+| `VirtoCommerce.UCP.Core` | Protocol models, service contracts, module constants, options, and errors. |
+| `VirtoCommerce.UCP.Data` | Provider-neutral UCP application services and integration logic. |
+| `VirtoCommerce.UCP.ExperienceApi` | XAPI schema marker for the module. |
+| `VirtoCommerce.UCP.Web` | Module entry point, controllers, filters, GraphQL executor, and DI registrations. |
+| `VirtoCommerce.UCP.Tests` | Unit tests for discovery, catalog, cart, checkout handoff, geography, and order tracking behavior. |
 
 The module does not define a UCP database model and does not run module database migrations.
 
@@ -45,7 +45,7 @@ flowchart LR
     McpClient["MCP client"]
     UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*<br/>/ucp/mcp"]
     Controllers["ASP.NET Core controllers"]
-    Services["UCP services<br/>Virtocommerce.UCP.Data"]
+    Services["UCP services<br/>VirtoCommerce.UCP.Data"]
     Cache["Distributed cache<br/>Redis-backed or in-memory fallback<br/>handoff sessions"]
     Executor["IXApiInProcessExecutor"]
     XApi["Virto Commerce XAPI<br/>scoped schema: ucp"]
@@ -343,8 +343,8 @@ Responses include correlation id when available. The module reads `X-Correlation
 ## Build and Test
 
 ```powershell
-dotnet build C:\Source\vc-modules\vc-module-u-c-p\Virtocommerce.UCP.sln
-dotnet test C:\Source\vc-modules\vc-module-u-c-p\Virtocommerce.UCP.sln --no-build
+dotnet build C:\Source\vc-modules\vc-module-u-c-p\VirtoCommerce.UCP.sln
+dotnet test C:\Source\vc-modules\vc-module-u-c-p\VirtoCommerce.UCP.sln --no-build
 ```
 
 Expected status:
@@ -357,12 +357,12 @@ Expected status:
 For local platform testing, install this module id:
 
 ```text
-Virtocommerce.UCP
+VirtoCommerce.UCP
 ```
 
 Recommended smoke checks after installation:
 
-1. The module list contains `Virtocommerce.UCP`.
+1. The module list contains `VirtoCommerce.UCP`.
 2. `GET /.well-known/ucp` returns the UCP profile.
 3. `POST /ucp/v1/catalog/search` returns catalog results for the configured store.
 4. `GET /ucp/v1/catalog/products/{id}` returns product details or `product_not_found`.
