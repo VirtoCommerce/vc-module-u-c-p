@@ -57,6 +57,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
     {
         request ??= new UcpCheckoutRequest();
         NormalizeCheckoutContext(request);
+        ValidateSuppliedShippingAddress(request.ShippingAddress);
         var cart = await PrepareCartForCheckout(request, cancellationToken);
         var checkout = CreateCheckout(request, cart, StatusIncomplete);
 
@@ -84,6 +85,7 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         request ??= new UcpCheckoutRequest();
         request.CartId = FirstNotEmpty(request.CartId, checkoutId);
         NormalizeCheckoutContext(request);
+        ValidateSuppliedShippingAddress(request.ShippingAddress);
 
         var cart = await PrepareCartForCheckout(request, cancellationToken);
         var checkout = CreateCheckout(request, cart, StatusIncomplete);
@@ -124,8 +126,10 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         request ??= new UcpCheckoutRequest();
         request.CartId = FirstNotEmpty(request.CartId, checkoutId);
         NormalizeCheckoutContext(request);
+        ValidateSuppliedShippingAddress(request.ShippingAddress);
 
         var cart = await PrepareCartForCheckout(request, cancellationToken);
+        ValidateEffectiveShippingAddress(request.ShippingAddress, cart);
         var expiresAt = DateTimeOffset.UtcNow.AddMinutes(Math.Max(1, _options.HandoffTokenTtlMinutes));
         var checkout = CreateCheckout(request, cart, StatusRequiresEscalation);
         checkout.ExpiresAt = expiresAt;
@@ -248,6 +252,47 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
         request.Context.Language = FirstNotEmpty(request.Language, request.Context.Language);
         request.Context.BuyerId = FirstNotEmpty(request.BuyerId, request.Context.BuyerId);
         request.Context.OrganizationId = FirstNotEmpty(request.OrganizationId, request.Context.OrganizationId);
+    }
+
+    protected virtual void ValidateSuppliedShippingAddress(UcpCheckoutAddress address)
+    {
+        if (address != null)
+        {
+            ValidateShippingAddress(address.FirstName, address.LastName, address.PostalCode);
+        }
+    }
+
+    protected virtual void ValidateEffectiveShippingAddress(UcpCheckoutAddress requestedAddress, UcpCart cart)
+    {
+        if (requestedAddress != null)
+        {
+            return;
+        }
+
+        var cartAddress = cart?.Shipments?
+            .Select(shipment => shipment.DeliveryAddress)
+            .FirstOrDefault(address => address != null) ??
+            cart?.Addresses?.FirstOrDefault(address => string.Equals(address.AddressType, "shipping", StringComparison.OrdinalIgnoreCase));
+
+        if (cartAddress == null)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "shipping_address is required for hosted checkout.");
+        }
+
+        ValidateShippingAddress(cartAddress.FirstName, cartAddress.LastName, cartAddress.PostalCode);
+    }
+
+    protected virtual void ValidateShippingAddress(string firstName, string lastName, string postalCode)
+    {
+        if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(lastName))
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "shipping_address.first_name and shipping_address.last_name are required for hosted checkout.");
+        }
+
+        if (string.IsNullOrWhiteSpace(postalCode))
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "shipping_address.postal_code is required for hosted checkout.");
+        }
     }
 
     protected virtual UcpCheckout CreateCheckout(UcpCheckoutRequest request, UcpCart cart, string status)

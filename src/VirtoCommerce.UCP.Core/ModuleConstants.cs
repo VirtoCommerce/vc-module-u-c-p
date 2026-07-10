@@ -18,7 +18,14 @@ public static class ModuleConstants
         When store_id, currency, or language are unknown, call get_store_capabilities first and use the default store metadata returned by this installation. If this installation exposes multiple stores without a default, use an explicit store_id from the user or ask the user to choose.
         For shopping flows, use MCP tools directly: search products, create or update cart, resolve country/regions, then use checkout_and_handoff when the buyer is ready for hosted checkout.
         Delivery addresses belong in structured shipping_address fields, not notes.
+        Before checkout for physical goods, require shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code. If the user did not provide any of them, ask for the missing value and do not call a checkout or handoff tool yet.
+        Resolve country with resolve_country and, when the country defines regions, resolve region_id with list_regions before checkout. City remains free text.
+        Treat price.amount as the current sell price and list_price.amount as the pre-discount reference price.
+        update_cart accepts the complete desired line_items state, not a delta. Reuse the existing cart_id and buyer_id; never call create_cart as a fallback for changing an existing cart.
+        After create_cart or update_cart, inspect line_items and messages. If an expected line is missing, call get_cart once to account for asynchronous settling; do not claim that an item was added unless the re-read contains it.
+        Read-only xapi_execution_failed errors from search_products or get_product may be transient; retry the same read-only tool once. Do not automatically retry mutating cart or checkout tools.
         For hosted checkout, return checkout.continue_url to the buyer and keep cart_id for later track_order.
+        After hosted checkout, use the saved cart_id and buyer_id with track_order when the user asks about the order; do not require an order number when those saved identifiers are available.
         """;
 
     public static class Capabilities

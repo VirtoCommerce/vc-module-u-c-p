@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
@@ -32,8 +34,8 @@ public static class UcpMcpCommerceTools
         string store_id = null,
         string currency = null,
         string language = null,
-        long? price_min = null,
-        long? price_max = null,
+        [Description("Inclusive minimum sell price in minor currency units; for example, 20000 means $200.00 for USD.")] long? price_min = null,
+        [Description("Inclusive maximum sell price in minor currency units; for example, 15000 means $150.00 for USD.")] long? price_max = null,
         int limit = 10,
         CancellationToken cancellationToken = default)
     {
@@ -87,13 +89,7 @@ public static class UcpMcpCommerceTools
             var productId = FirstNotEmpty(product_id, id);
             if (string.IsNullOrWhiteSpace(productId))
             {
-                return new UcpMcpToolError
-                {
-                    IsError = true,
-                    Code = ModuleConstants.ErrorCodes.InvalidRequest,
-                    StatusCode = 400,
-                    Message = "id is required.",
-                };
+                throw new UcpException(ModuleConstants.ErrorCodes.InvalidRequest, "id is required.");
             }
 
             var request = new UcpCatalogSearchRequest
@@ -123,9 +119,9 @@ public static class UcpMcpCommerceTools
         string store_id = null,
         string currency = null,
         string language = null,
-        string buyer_id = null,
+        [Description("Stable buyer identifier. Preserve and reuse the cart.buyer_id returned by this tool for later cart and checkout calls.")] string buyer_id = null,
         string organization_id = null,
-        string cart_name = null,
+        [Description("Stable cart name used together with buyer_id and store_id.")] string cart_name = null,
         string cart_type = null,
         IList<string> coupons = null,
         CancellationToken cancellationToken = default)
@@ -219,7 +215,7 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.CreateCheckout, ReadOnly = false, Destructive = false)]
-    [Description("Create checkout in this Virto Commerce storefront.")]
+    [Description("Create checkout in this Virto Commerce storefront. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
     public static Task<object> CreateCheckout(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
@@ -301,7 +297,7 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.CheckoutAndHandoff, ReadOnly = false, Destructive = false)]
-    [Description("Create checkout and immediately create a hosted checkout handoff URL in this Virto Commerce storefront.")]
+    [Description("Create checkout and immediately create a hosted checkout handoff URL. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
     public static Task<object> CheckoutAndHandoff(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
@@ -352,7 +348,7 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.HandoffCheckout, ReadOnly = false, Destructive = false)]
-    [Description("Create hosted checkout handoff URL in this Virto Commerce storefront.")]
+    [Description("Create a hosted checkout handoff URL. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
     public static Task<object> HandoffCheckout(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
@@ -471,13 +467,15 @@ public static class UcpMcpCommerceTools
         }
         catch (UcpException exception)
         {
-            return new UcpMcpToolError
+            var error = new UcpMcpToolError
             {
                 IsError = true,
                 Code = exception.Code,
                 StatusCode = exception.StatusCode,
                 Message = exception.Message,
             };
+
+            throw new McpException(JsonSerializer.Serialize(error), exception);
         }
     }
 
@@ -631,9 +629,11 @@ public static class UcpMcpCommerceTools
     private static void ApplyCatalogDefaults(UcpCatalogSearchRequest request, UcpProfile profile)
     {
         request.Context ??= new UcpCatalogContext();
-        request.Context.StoreId = FirstNotEmpty(request.Context.StoreId, request.StoreId, GetDefaultStore(profile)?.Id);
-        request.Context.Currency = FirstNotEmpty(request.Context.Currency, request.Currency, GetDefaultStore(profile)?.DefaultCurrency);
-        request.Context.Language = FirstNotEmpty(request.Context.Language, request.Language, GetDefaultStore(profile)?.DefaultLanguage);
+        var requestedStoreId = FirstNotEmpty(request.Context.StoreId, request.StoreId);
+        var store = GetStore(profile, requestedStoreId);
+        request.Context.StoreId = FirstNotEmpty(requestedStoreId, store?.Id);
+        request.Context.Currency = FirstNotEmpty(request.Context.Currency, request.Currency, store?.DefaultCurrency);
+        request.Context.Language = FirstNotEmpty(request.Context.Language, request.Language, store?.DefaultLanguage);
         request.StoreId = FirstNotEmpty(request.StoreId, request.Context.StoreId);
         request.Currency = FirstNotEmpty(request.Currency, request.Context.Currency);
         request.Language = FirstNotEmpty(request.Language, request.Context.Language);
@@ -665,21 +665,35 @@ public static class UcpMcpCommerceTools
 
     private static void ApplyCartContextDefaults(UcpCartContext context, UcpProfile profile)
     {
-        var store = GetDefaultStore(profile);
+        var store = GetStore(profile, context.StoreId);
         context.StoreId = FirstNotEmpty(context.StoreId, store?.Id);
         context.Currency = FirstNotEmpty(context.Currency, store?.DefaultCurrency);
         context.Language = FirstNotEmpty(context.Language, store?.DefaultLanguage);
     }
 
-    private static UcpStoreProfile GetDefaultStore(UcpProfile profile)
+    private static UcpStoreProfile GetStore(UcpProfile profile, string storeId)
     {
-        if (profile?.Store != null)
+        if (profile?.Store != null &&
+            (string.IsNullOrWhiteSpace(storeId) || string.Equals(profile.Store.Id, storeId, StringComparison.OrdinalIgnoreCase)))
         {
             return profile.Store;
         }
 
         if (profile?.Stores == null || profile.Stores.Count == 0)
         {
+            return null;
+        }
+
+        if (!string.IsNullOrWhiteSpace(storeId))
+        {
+            foreach (var store in profile.Stores)
+            {
+                if (string.Equals(store.Id, storeId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return store;
+                }
+            }
+
             return null;
         }
 
@@ -721,12 +735,16 @@ public static class UcpMcpCommerceTools
 
 public sealed class UcpMcpToolError
 {
+    [JsonPropertyName("is_error")]
     public bool IsError { get; set; }
 
+    [JsonPropertyName("code")]
     public string Code { get; set; }
 
+    [JsonPropertyName("status_code")]
     public int StatusCode { get; set; }
 
+    [JsonPropertyName("message")]
     public string Message { get; set; }
 }
 

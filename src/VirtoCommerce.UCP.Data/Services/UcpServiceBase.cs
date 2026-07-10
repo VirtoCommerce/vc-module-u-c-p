@@ -104,7 +104,10 @@ public abstract class UcpServiceBase
         };
     }
 
-    protected virtual JsonDocument ParseGraphQlResult(XApiExecutionResult result, string source)
+    protected virtual JsonDocument ParseGraphQlResult(
+        XApiExecutionResult result,
+        string source,
+        Func<JsonElement, bool> canTolerateError = null)
     {
         if (result == null || string.IsNullOrWhiteSpace(result.Json))
         {
@@ -112,9 +115,13 @@ public abstract class UcpServiceBase
         }
 
         var document = JsonDocument.Parse(result.Json);
-        var hasErrors = document.RootElement.TryGetProperty("errors", out var errors);
+        var hasErrors = document.RootElement.TryGetProperty("errors", out var errors) &&
+            errors.ValueKind == JsonValueKind.Array &&
+            errors.GetArrayLength() > 0;
+        var hasBlockingErrors = hasErrors &&
+            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
 
-        if (!result.Succeeded || hasErrors)
+        if (hasBlockingErrors || (!result.Succeeded && !hasErrors))
         {
             var message = errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
                 ? ReadString(errors[0], "message") ?? $"{source} execution failed."

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -56,7 +57,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             User = BuildBuyerPrincipal(),
         }, cancellationToken);
 
-        using var document = ParseGraphQlResult(result, "XCatalog");
+        using var document = ParseGraphQlResult(result, "XCatalog", IsRecoverablePropertyValueError);
         var products = document.RootElement
             .GetProperty("data")
             .GetProperty("products");
@@ -105,7 +106,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             User = BuildBuyerPrincipal(),
         }, cancellationToken);
 
-        using var document = ParseGraphQlResult(result, "XCatalog");
+        using var document = ParseGraphQlResult(result, "XCatalog", IsRecoverablePropertyValueError);
         var productElement = document.RootElement
             .GetProperty("data")
             .GetProperty("product");
@@ -115,11 +116,53 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             throw CreateException(ModuleConstants.ErrorCodes.ProductNotFound, $"Product '{productId}' was not found.", StatusCodes.Status404NotFound);
         }
 
+        await EnsureProductBelongsToStore(productId, productElement, catalogRequest, cancellationToken);
+
         return new UcpProductResponse
         {
             Ucp = CreateMetadata("success", "dev.ucp.shopping.catalog.lookup"),
             Product = ReadProduct(productElement),
         };
+    }
+
+    private async Task EnsureProductBelongsToStore(
+        string productId,
+        JsonElement product,
+        CatalogExecutionRequest catalogRequest,
+        CancellationToken cancellationToken)
+    {
+        var lookupText = FirstNotEmpty(ReadString(product, "code"), ReadString(product, "name"));
+        var result = await _xApiExecutor.Execute(new XApiExecutionRequest
+        {
+            Query = ProductMembershipQuery,
+            OperationName = "UcpCheckProductMembership",
+            Variables = new Dictionary<string, object>
+            {
+                ["storeId"] = catalogRequest.StoreId,
+                ["userId"] = GetBuyerUserId(),
+                ["currencyCode"] = catalogRequest.Currency,
+                ["cultureName"] = catalogRequest.CultureName,
+                ["query"] = lookupText,
+                ["first"] = MaxLimit,
+            },
+            User = BuildBuyerPrincipal(),
+        }, cancellationToken);
+
+        using var document = ParseGraphQlResult(result, "XCatalog");
+        var items = document.RootElement
+            .GetProperty("data")
+            .GetProperty("products")
+            .GetProperty("items");
+        var belongsToStore = items.EnumerateArray().Any(item =>
+            string.Equals(ReadString(item, "id"), productId, StringComparison.OrdinalIgnoreCase) ||
+            item.TryGetProperty("variations", out var variations) &&
+            variations.ValueKind == JsonValueKind.Array &&
+            variations.EnumerateArray().Any(variation => string.Equals(ReadString(variation, "id"), productId, StringComparison.OrdinalIgnoreCase)));
+
+        if (!belongsToStore)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.ProductNotFound, $"Product '{productId}' was not found.", StatusCodes.Status404NotFound);
+        }
     }
 
     private CatalogExecutionRequest BuildCatalogExecutionRequest(UcpCatalogSearchRequest request)
@@ -186,7 +229,28 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             filters.AddRange(request.Filters.Categories.Select(category => $"category.subtree:{category}"));
         }
 
+        var minPrice = request.Filters?.Price?.Min;
+        var maxPrice = request.Filters?.Price?.Max;
+        if (minPrice.HasValue || maxPrice.HasValue)
+        {
+            var lower = minPrice.HasValue ? ToMajorUnits(minPrice.Value) : null;
+            var upper = maxPrice.HasValue ? ToMajorUnits(maxPrice.Value) : null;
+            var leftBracket = minPrice.HasValue ? "[" : "(";
+            var rightBracket = maxPrice.HasValue ? "]" : ")";
+            var range = minPrice.HasValue && maxPrice.HasValue
+                ? $"{lower} TO {upper}"
+                : minPrice.HasValue
+                    ? $"{lower} TO"
+                    : $"TO {upper}";
+            filters.Add($"price:{leftBracket}{range}{rightBracket}");
+        }
+
         return filters.Count == 0 ? null : string.Join(" ", filters);
+    }
+
+    private static string ToMajorUnits(long amount)
+    {
+        return (amount / 100m).ToString(CultureInfo.InvariantCulture);
     }
 
     protected virtual UcpProduct ReadProduct(JsonElement element)
@@ -279,6 +343,23 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         };
     }
 
+    private static bool IsRecoverablePropertyValueError(JsonElement error)
+    {
+        if (error.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.Array)
+        {
+            var pathSegments = path.EnumerateArray().ToList();
+            if (pathSegments.Count > 0 &&
+                pathSegments[^1].ValueKind == JsonValueKind.String &&
+                string.Equals(pathSegments[^1].GetString(), "value", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        var message = ReadString(error, "message");
+        return message?.Contains("resolve field 'value'", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     protected const string ProductFields = """
         id
         code
@@ -336,6 +417,19 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         query UcpGetProduct($id: String!, $storeId: String!, $userId: String, $currencyCode: String, $cultureName: String) {
           product(id: $id, storeId: $storeId, userId: $userId, currencyCode: $currencyCode, cultureName: $cultureName) {
         {{ProductFields}}
+          }
+        }
+        """;
+
+    protected static readonly string ProductMembershipQuery = """
+        query UcpCheckProductMembership($storeId: String!, $userId: String, $currencyCode: String, $cultureName: String, $query: String, $first: Int) {
+          products(storeId: $storeId, userId: $userId, currencyCode: $currencyCode, cultureName: $cultureName, query: $query, first: $first) {
+            items {
+              id
+              variations {
+                id
+              }
+            }
           }
         }
         """;
