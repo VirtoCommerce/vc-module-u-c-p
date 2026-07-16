@@ -178,6 +178,12 @@ public class UcpMcpCommerceToolsTests
         Assert.Contains("saved cart_id and buyer_id", ModuleConstants.McpInstructions);
         Assert.Contains("list_carts requires an explicit buyer_id", ModuleConstants.McpInstructions);
         Assert.Contains("buyer scope, not Platform authentication", ModuleConstants.McpInstructions);
+        Assert.Contains("MCP tool calls are stateless", ModuleConstants.McpInstructions);
+        Assert.Contains("build a fresh argument object", ModuleConstants.McpInstructions);
+        Assert.Contains("every new line item requires product_id and quantity greater than zero", ModuleConstants.McpInstructions);
+        Assert.Contains("explicitly repeat cart_id, store_id, and buyer_id", ModuleConstants.McpInstructions);
+        Assert.Contains("Never send a partial shipping_address", ModuleConstants.McpInstructions);
+        Assert.Contains("at least one of order_id, order_number, or the saved cart_id", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("McpDefaultStorefrontUrl", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("get_ucp_autodiscovery", ModuleConstants.McpInstructions);
     }
