@@ -50,12 +50,7 @@ public class Module : IModule, IHasConfiguration
             {
                 options.Stateless = true;
             })
-            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, new JsonSerializerOptions
-            {
-                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-                TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
-            });
+            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, CreateMcpToolSerializerOptions());
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();
@@ -71,6 +66,17 @@ public class Module : IModule, IHasConfiguration
         });
 
         serviceCollection.AddSingleton<ScopedSchemaFactory<XapiAssemblyMarker>>();
+    }
+
+    private static JsonSerializerOptions CreateMcpToolSerializerOptions()
+    {
+        return new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+        };
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)

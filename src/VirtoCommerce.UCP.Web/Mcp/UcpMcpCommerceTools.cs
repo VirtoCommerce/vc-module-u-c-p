@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -136,14 +137,15 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.ListCarts, ReadOnly = true, Destructive = false)]
-    [Description("List buyer-scoped carts in this Virto Commerce storefront.")]
+    [Description("List buyer-scoped carts in this Virto Commerce storefront. An explicit buyer_id is required; global anonymous cart listing is not allowed.")]
     public static Task<object> ListCarts(
         IUcpProfileService profileService,
         IUcpCartService cartService,
         string store_id = null,
         string currency = null,
         string language = null,
-        string buyer_id = null,
+        [Required]
+        [Description("Required buyer user id whose carts should be listed. Preserve and reuse cart.buyer_id returned by cart operations.")] string buyer_id = null,
         string organization_id = null,
         string cart_name = null,
         string cart_type = null,
@@ -154,6 +156,11 @@ public static class UcpMcpCommerceTools
     {
         return Execute(async () =>
         {
+            if (string.IsNullOrWhiteSpace(buyer_id))
+            {
+                throw new UcpException(ModuleConstants.ErrorCodes.InvalidRequest, "buyer_id is required to list carts.");
+            }
+
             var request = new UcpCartListRequest
             {
                 Pagination = new UcpPaginationRequest { Cursor = cursor, Limit = limit },

@@ -1,7 +1,10 @@
 using System.Linq;
 using System.Reflection;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
@@ -9,6 +12,7 @@ using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Web.Mcp;
 using Xunit;
+using UcpModule = VirtoCommerce.UCP.Web.Module;
 
 namespace VirtoCommerce.UCP.Tests;
 
@@ -98,14 +102,68 @@ public class UcpMcpCommerceToolsTests
             .GetMethod(nameof(UcpMcpCommerceTools.SearchProducts))
             ?.GetParameters()
             .ToDictionary(parameter => parameter.Name);
+        var listCartsMethod = typeof(UcpMcpCommerceTools)
+            .GetMethod(nameof(UcpMcpCommerceTools.ListCarts));
+        var listCartsBuyerParameter = listCartsMethod
+            ?.GetParameters()
+            .Single(parameter => parameter.Name == "buyer_id");
         var checkoutDescription = typeof(UcpMcpCommerceTools)
             .GetMethod(nameof(UcpMcpCommerceTools.CheckoutAndHandoff))
             ?.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()
             ?.Description;
 
         Assert.Contains("minor currency units", searchParameters["price_max"].GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()?.Description);
+        Assert.Contains("explicit buyer_id is required", listCartsMethod?.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()?.Description);
+        Assert.Contains("Required buyer user id", listCartsBuyerParameter?.GetCustomAttribute<System.ComponentModel.DescriptionAttribute>()?.Description);
+        Assert.NotNull(listCartsBuyerParameter?.GetCustomAttribute<System.ComponentModel.DataAnnotations.RequiredAttribute>());
         Assert.Contains("shipping_address.postal_code", checkoutDescription);
         Assert.Contains("ask the user", checkoutDescription);
+    }
+
+    [Fact]
+    public void McpToolSerializerOptions_ReadNumbersFromJsonStrings()
+    {
+        var options = CreateMcpToolSerializerOptions();
+
+        var value = JsonSerializer.Deserialize<long?>("\"15000\"", options);
+
+        Assert.Equal(JsonNumberHandling.AllowReadingFromString, options.NumberHandling);
+        Assert.Equal(15000, value);
+    }
+
+    [Fact]
+    public void McpToolSchemas_RequireBuyerIdAndKeepPricesNumeric()
+    {
+        using var services = new ServiceCollection()
+            .AddSingleton<IUcpProfileService>(_ => null)
+            .AddSingleton<IUcpCatalogService>(_ => null)
+            .AddSingleton<IUcpCartService>(_ => null)
+            .BuildServiceProvider();
+        var options = new McpServerToolCreateOptions
+        {
+            Services = services,
+            SerializerOptions = CreateMcpToolSerializerOptions(),
+        };
+        var searchTool = McpServerTool.Create(
+            typeof(UcpMcpCommerceTools).GetMethod(nameof(UcpMcpCommerceTools.SearchProducts)),
+            target: null,
+            options);
+        var listCartsTool = McpServerTool.Create(
+            typeof(UcpMcpCommerceTools).GetMethod(nameof(UcpMcpCommerceTools.ListCarts)),
+            target: null,
+            options);
+
+        var searchProperties = searchTool.ProtocolTool.InputSchema.GetProperty("properties");
+        var listCartsRequired = listCartsTool.ProtocolTool.InputSchema.GetProperty("required")
+            .EnumerateArray()
+            .Select(element => element.GetString())
+            .ToArray();
+
+        Assert.Contains("integer", GetSchemaTypes(searchProperties.GetProperty("price_min")));
+        Assert.Contains("integer", GetSchemaTypes(searchProperties.GetProperty("price_max")));
+        Assert.DoesNotContain("string", GetSchemaTypes(searchProperties.GetProperty("price_min")));
+        Assert.DoesNotContain("string", GetSchemaTypes(searchProperties.GetProperty("price_max")));
+        Assert.Contains("buyer_id", listCartsRequired);
     }
 
     [Fact]
@@ -118,8 +176,25 @@ public class UcpMcpCommerceToolsTests
         Assert.Contains("complete desired line_items state", ModuleConstants.McpInstructions);
         Assert.Contains("never call create_cart as a fallback", ModuleConstants.McpInstructions);
         Assert.Contains("saved cart_id and buyer_id", ModuleConstants.McpInstructions);
+        Assert.Contains("list_carts requires an explicit buyer_id", ModuleConstants.McpInstructions);
+        Assert.Contains("buyer scope, not Platform authentication", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("McpDefaultStorefrontUrl", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("get_ucp_autodiscovery", ModuleConstants.McpInstructions);
+    }
+
+    [Fact]
+    public async Task ListCarts_MissingBuyerId_ThrowsMcpToolError()
+    {
+        var exception = await Assert.ThrowsAsync<McpException>(() => UcpMcpCommerceTools.ListCarts(
+            null,
+            null,
+            buyer_id: null,
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Contains("\"is_error\":true", exception.Message);
+        Assert.Contains("\"code\":\"invalid_request\"", exception.Message);
+        Assert.Contains("\"status_code\":400", exception.Message);
+        Assert.Contains("\"message\":\"buyer_id is required to list carts.\"", exception.Message);
     }
 
     [Fact]
@@ -171,6 +246,24 @@ public class UcpMcpCommerceToolsTests
             .Where(attribute => attribute != null)
             .Select(attribute => attribute.Name)
             .ToArray();
+    }
+
+    private static string[] GetSchemaTypes(JsonElement schema)
+    {
+        var type = schema.GetProperty("type");
+
+        return type.ValueKind == JsonValueKind.Array
+            ? type.EnumerateArray().Select(element => element.GetString()).ToArray()
+            : [type.GetString()];
+    }
+
+    private static JsonSerializerOptions CreateMcpToolSerializerOptions()
+    {
+        var factory = typeof(UcpModule).GetMethod(
+            "CreateMcpToolSerializerOptions",
+            BindingFlags.NonPublic | BindingFlags.Static);
+
+        return Assert.IsType<JsonSerializerOptions>(factory?.Invoke(null, null));
     }
 
     private sealed class StubProfileService : IUcpProfileService
