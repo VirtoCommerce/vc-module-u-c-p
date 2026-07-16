@@ -237,11 +237,12 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             var upper = maxPrice.HasValue ? ToMajorUnits(maxPrice.Value) : null;
             var leftBracket = minPrice.HasValue ? "[" : "(";
             var rightBracket = maxPrice.HasValue ? "]" : ")";
-            var range = minPrice.HasValue && maxPrice.HasValue
-                ? $"{lower} TO {upper}"
-                : minPrice.HasValue
-                    ? $"{lower} TO"
-                    : $"TO {upper}";
+            var range = (minPrice.HasValue, maxPrice.HasValue) switch
+            {
+                (true, true) => $"{lower} TO {upper}",
+                (true, false) => $"{lower} TO",
+                _ => $"TO {upper}",
+            };
             filters.Add($"price:{leftBracket}{range}{rightBracket}");
         }
 

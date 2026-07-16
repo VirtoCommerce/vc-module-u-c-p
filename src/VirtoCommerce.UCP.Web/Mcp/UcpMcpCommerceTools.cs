@@ -554,7 +554,7 @@ public static class UcpMcpCommerceTools
         string buyerName,
         string buyerPhone)
     {
-        if (buyer == null && string.IsNullOrWhiteSpace(buyerId) && string.IsNullOrWhiteSpace(buyerEmail) && string.IsNullOrWhiteSpace(buyerName) && string.IsNullOrWhiteSpace(buyerPhone))
+        if (buyer == null && !HasBuyerHints(buyerId, buyerEmail, buyerName, buyerPhone))
         {
             return null;
         }
@@ -566,6 +566,14 @@ public static class UcpMcpCommerceTools
         buyer.Phone = FirstNotEmpty(buyer.Phone, buyerPhone);
 
         return buyer;
+    }
+
+    private static bool HasBuyerHints(string buyerId, string buyerEmail, string buyerName, string buyerPhone)
+    {
+        return !string.IsNullOrWhiteSpace(buyerId)
+            || !string.IsNullOrWhiteSpace(buyerEmail)
+            || !string.IsNullOrWhiteSpace(buyerName)
+            || !string.IsNullOrWhiteSpace(buyerPhone);
     }
 
     private static IDictionary<string, object> CreateTrackOrderArguments(string cartId, string buyerId, string organizationId, string language)
