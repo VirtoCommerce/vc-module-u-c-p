@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
@@ -701,25 +702,17 @@ public static class UcpMcpCommerceTools
 
         if (!string.IsNullOrWhiteSpace(storeId))
         {
-            foreach (var store in profile.Stores)
-            {
-                if (string.Equals(store.Id, storeId, StringComparison.OrdinalIgnoreCase))
-                {
-                    return store;
-                }
-            }
-
-            return null;
+            return profile.Stores.FirstOrDefault(store =>
+                string.Equals(store.Id, storeId, StringComparison.OrdinalIgnoreCase));
         }
 
         if (!string.IsNullOrWhiteSpace(profile.DefaultStoreId))
         {
-            foreach (var store in profile.Stores)
+            var defaultStore = profile.Stores.FirstOrDefault(store =>
+                string.Equals(store.Id, profile.DefaultStoreId, StringComparison.OrdinalIgnoreCase));
+            if (defaultStore != null)
             {
-                if (string.Equals(store.Id, profile.DefaultStoreId, StringComparison.OrdinalIgnoreCase))
-                {
-                    return store;
-                }
+                return defaultStore;
             }
         }
 
@@ -736,15 +729,7 @@ public static class UcpMcpCommerceTools
 
     private static string FirstNotEmpty(params string[] values)
     {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value;
-            }
-        }
-
-        return null;
+        return values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
     }
 }
 
