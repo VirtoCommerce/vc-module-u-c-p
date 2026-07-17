@@ -93,6 +93,110 @@ The module manifest declares these runtime dependencies:
 
 Target framework: `.NET 10`.
 
+## Quickstart: Connect Virto Start Cloud to Claude Desktop
+
+This is the complete partner-facing setup for an existing Virto Start environment deployed in Virto Cloud. The Storefront host exposes the UCP endpoints, while Virto Cloud routes the requests to the Platform application where this module runs.
+
+Before starting, identify the exact Virto Commerce Store ID and the public Storefront host. The examples below use `B2B-store` and `store.example.com`.
+
+### 1. Install the module
+
+Install the `VirtoCommerce.UCP` module in the Virto Start **Platform application**. The required module dependencies are listed in [Dependencies](#dependencies).
+
+### 2. Update the Virto Cloud environment
+
+In the Virto Cloud deployment repository, update the target environment in `infra/environments.yml`. Add the UCP settings under `platform.config`, then route `/ucp` and `/.well-known/ucp` from the Storefront host to `platform`:
+
+```yaml
+platform:
+  config:
+    UCP__DefaultStoreId: B2B-store
+    UCP__DefaultCurrency: USD
+    UCP__DefaultCultureName: en-US
+    UCP__StorefrontOrigin: "https://store.example.com"
+    UCP__UcpBaseUrl: "https://store.example.com/ucp/v1"
+    UCP__HandoffUrlTemplate: "https://store.example.com/checkout?ucp_session={token}"
+    UCP__HandoffTokenTtlMinutes: 15
+
+routes:
+  - host: store.example.com
+    root: B2B-store
+    paths:
+      - path: /ucp
+        route: platform
+      - path: /.well-known/ucp
+        route: platform
+```
+
+Replace `B2B-store` with the exact Store ID and `store.example.com` with the Virto Start Storefront host. Do not use the store display name as `UCP__DefaultStoreId`.
+
+The `/ucp` route covers `/ucp/mcp` and all `/ucp/v1/*` endpoints. `/.well-known/ucp` needs its own route because it is outside the `/ucp` prefix.
+
+Deploy the updated Virto Cloud environment. This restarts the Platform with the UCP configuration and applies the public routes.
+
+### 3. Verify the Virto Start endpoint
+
+Open the Storefront discovery URL in a browser:
+
+```text
+https://store.example.com/.well-known/ucp
+```
+
+Before connecting Claude, verify that the response contains:
+
+- the expected `default_store_id`;
+- the expected store currency, language, and storefront URL;
+- `mcp_tools` with tools such as `get_store_capabilities` and `search_products`;
+- `endpoints.ucp_base_url` equal to `https://store.example.com/ucp/v1`.
+
+The remote MCP URL is:
+
+```text
+https://store.example.com/ucp/mcp
+```
+
+The Storefront host must be publicly reachable from Anthropic's cloud. A host restricted to a VPN or private network cannot be used as a Claude remote connector unless the network allows Anthropic's published IP ranges.
+
+### 4. Add the connector to Claude Desktop
+
+Remote MCP servers are configured as Claude custom connectors. Do **not** put this remote URL in `claude_desktop_config.json`; that file is for locally launched MCP servers.
+
+For an individual Claude plan:
+
+1. Open Claude Desktop and go to **Customize > Connectors**.
+2. Select **+ > Add custom connector**.
+3. Set the name to `Virto Commerce UCP`.
+4. Set the remote MCP server URL to `https://store.example.com/ucp/mcp`.
+5. Select **Add**.
+6. In a new conversation, select **+ > Connectors** and enable `Virto Commerce UCP`.
+
+For a Team or Enterprise plan, an Owner must first add the URL under **Organization settings > Connectors**. Each user can then connect to and enable it for a conversation.
+
+See Anthropic's [remote MCP custom connector guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) for the current Claude UI and network requirements.
+
+### 5. Run the first Claude smoke test
+
+Start a new Claude conversation with the connector enabled and send:
+
+```text
+Use the Virto Commerce UCP connector. First call get_store_capabilities.
+Then search for products matching "printer". Use the default store, currency,
+and language published by the server. Ask me to select a store only if the
+server publishes multiple stores and no default_store_id.
+```
+
+Claude should call `get_store_capabilities` and then `search_products` without asking for values already published by the server.
+
+### Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Claude cannot connect | Confirm that the Cloud Environment routes `/ucp` to `platform`, the Storefront host is public, and the updated environment was deployed. |
+| `missing_store_id` | Confirm that `platform.config.UCP__DefaultStoreId` contains the exact Store ID and the updated environment was deployed. |
+| Search returns no products | Confirm that the store is open, the catalog is assigned to the store, prices and inventory exist, and the search index has been built. |
+| Checkout opens the wrong host | Configure `Store.SecureUrl` / `Store.Url`, or set `UCP__StorefrontOrigin` and `UCP__HandoffUrlTemplate`. |
+| A Team or Enterprise user cannot add the connector | Ask an organization Owner to add the custom connector first. |
+
 ## Configuration
 
 Configuration is read from the `UCP` section:
@@ -103,9 +207,9 @@ Configuration is read from the `UCP` section:
     "DefaultStoreId": "store-acme",
     "DefaultCurrency": "USD",
     "DefaultCultureName": "en-US",
-    "UcpBaseUrl": "https://localhost:5001/ucp/v1",
-    "StorefrontOrigin": "https://localhost:3000",
-    "HandoffUrlTemplate": "https://localhost:3000/checkout?ucp_session={token}",
+    "UcpBaseUrl": "https://store.example.com/ucp/v1",
+    "StorefrontOrigin": "https://store.example.com",
+    "HandoffUrlTemplate": "https://store.example.com/checkout?ucp_session={token}",
     "HandoffTokenTtlMinutes": 15,
     "AnonymousCatalog": true
   }
