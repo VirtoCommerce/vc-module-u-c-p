@@ -40,6 +40,7 @@ public class UcpCheckoutServiceTests
     public async Task HandoffCheckout_ReturnsContinueUrlAndRestoreReadsToken()
     {
         var cart = CreateCart();
+        cart.Addresses.Add(CreateShippingAddress());
         var service = CreateService(new StubCartService(cart));
 
         var handoff = await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
@@ -245,18 +246,63 @@ public class UcpCheckoutServiceTests
     }
 
     [Fact]
-    public async Task HandoffCheckout_WarnsWhenAddressWasPutIntoNotes()
+    public async Task HandoffCheckout_RejectsAddressInNotes()
     {
         var service = CreateService(new StubCartService(CreateCart()));
 
-        var response = await service.HandoffCheckout("cart-1", new UcpCheckoutRequest
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.HandoffCheckout("cart-1", new UcpCheckoutRequest
         {
             Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
             Notes = "United States, Seattle, 1 Main St Apt 100",
-        }, TestContext.Current.CancellationToken);
+        }, TestContext.Current.CancellationToken));
 
-        Assert.Null(response.Checkout.ShippingAddress);
-        Assert.Contains(response.Messages, x => x.Code == "shipping_address_not_notes");
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Contains("shipping_address is required", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateCheckout_RejectsSuppliedAddressWithoutPostalCode()
+    {
+        var service = CreateService(new StubCartService(CreateCart()));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.CreateCheckout(new UcpCheckoutRequest
+        {
+            CartId = "cart-1",
+            Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                FirstName = "Jane",
+                LastName = "Doe",
+                Line1 = "1 Main St",
+                City = "Seattle",
+                CountryCode = "US",
+            },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Contains("shipping_address.postal_code is required", exception.Message);
+    }
+
+    [Fact]
+    public async Task CreateCheckout_RejectsSuppliedAddressWithoutRecipientName()
+    {
+        var service = CreateService(new StubCartService(CreateCart()));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.CreateCheckout(new UcpCheckoutRequest
+        {
+            CartId = "cart-1",
+            Context = new UcpCartContext { StoreId = "store-acme", Currency = "USD", Language = "en-US" },
+            ShippingAddress = new UcpCheckoutAddress
+            {
+                Line1 = "1 Main St",
+                City = "Seattle",
+                PostalCode = "98101",
+                CountryCode = "US",
+            },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Contains("shipping_address.first_name", exception.Message);
     }
 
     private static UcpCheckoutService CreateService(IUcpCartService cartService)
@@ -302,6 +348,21 @@ public class UcpCheckoutServiceTests
             {
                 Total = new UcpMoney { Amount = 1000, Currency = "USD", FormattedAmount = "$10.00" },
             },
+        };
+    }
+
+    private static UcpCartAddress CreateShippingAddress()
+    {
+        return new UcpCartAddress
+        {
+            Id = "ship-1",
+            AddressType = "shipping",
+            FirstName = "Ada",
+            LastName = "Buyer",
+            Line1 = "1 Main St",
+            City = "Seattle",
+            PostalCode = "98101",
+            CountryCode = "US",
         };
     }
 

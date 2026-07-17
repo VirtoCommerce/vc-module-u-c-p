@@ -67,6 +67,7 @@ public class UcpCatalogServiceTests
         Assert.Equal("acme", executor.LastRequest.Variables["storeId"]);
         Assert.Equal("buyer-1", executor.LastRequest.Variables["userId"]);
         Assert.Equal("USD", executor.LastRequest.Variables["currencyCode"]);
+        Assert.Equal("price:(TO 150]", executor.LastRequest.Variables["filter"]);
         Assert.Contains(executor.LastRequest.User.Claims, x => x.Type == ClaimTypes.NameIdentifier && x.Value == "buyer-1");
         Assert.Contains(executor.LastRequest.User.Claims, x => x.Type == "organization_id" && x.Value == "org-1");
     }
@@ -109,8 +110,9 @@ public class UcpCatalogServiceTests
     [Fact]
     public async Task SearchProducts_AppliesMinimumPriceFilter()
     {
+        var executor = new StubXApiExecutor(SearchResponseJson);
         var service = new UcpCatalogService(
-            new StubXApiExecutor(SearchResponseJson),
+            executor,
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultStoreId = "acme", DefaultCurrency = "USD" }));
 
@@ -126,6 +128,28 @@ public class UcpCatalogServiceTests
         Assert.Single(response.Products);
         Assert.Equal("product-2", response.Products[0].Id);
         Assert.Equal(22000, response.Products[0].Price.Amount);
+        Assert.Equal("price:[150 TO)", executor.LastRequest.Variables["filter"]);
+    }
+
+
+    [Fact]
+    public async Task SearchProducts_PassesInclusivePriceBandToXCatalogInMajorUnits()
+    {
+        var executor = new StubXApiExecutor(SearchResponseJson);
+        var service = new UcpCatalogService(
+            executor,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme", DefaultCurrency = "USD" }));
+
+        await service.SearchProducts(new UcpCatalogSearchRequest
+        {
+            Filters = new UcpSearchFilters
+            {
+                Price = new UcpPriceFilter { Min = 20000, Max = 60000 },
+            },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("price:[200 TO 600]", executor.LastRequest.Variables["filter"]);
     }
 
     [Fact]
@@ -142,14 +166,84 @@ public class UcpCatalogServiceTests
         Assert.Equal(404, exception.StatusCode);
     }
 
+    [Fact]
+    public async Task GetProduct_ToleratesPropertyValueResolverErrorWhenProductDataIsAvailable()
+    {
+        var executor = new SequenceXApiExecutor(
+            PartialProductResponseJson,
+            """{"data":{"products":{"items":[{"id":"product-1","variations":[]}]}}}""");
+        var service = new UcpCatalogService(
+            executor,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var response = await service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken);
+
+        Assert.Equal("product-1", response.Product.Id);
+        Assert.Contains(response.Product.Attributes, attribute => attribute.Name == "ReleaseYear" && attribute.Value == null);
+    }
+
+    [Fact]
+    public async Task GetProduct_DoesNotTolerateUnrelatedGraphQlError()
+    {
+        var executor = new StubXApiExecutor(
+            PartialProductResponseJson
+                .Replace("'value'", "'product'")
+                .Replace("\"value\"]", "\"product\"]"),
+            succeeded: false);
+        var service = new UcpCatalogService(
+            executor,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
+    }
+
+    [Fact]
+    public async Task SearchProducts_FailedResponseWithEmptyErrors_UsesFallbackMessage()
+    {
+        var service = new UcpCatalogService(
+            new StubXApiExecutor("""{"errors":[]}""", succeeded: false),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() =>
+            service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
+        Assert.Equal("XCatalog execution failed.", exception.Message);
+    }
+
+    [Fact]
+    public async Task GetProduct_ReturnsNotFoundWhenProductIsOutsideStoreCatalog()
+    {
+        var executor = new SequenceXApiExecutor(
+            """{"data":{"product":{"id":"physical-only","code":"PHYSICAL-ONLY","name":"Physical only product","properties":[],"variations":[]}}}""",
+            """{"data":{"products":{"items":[]}}}""");
+        var service = new UcpCatalogService(
+            executor,
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProduct("physical-only", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.ProductNotFound, exception.Code);
+        Assert.Equal(404, exception.StatusCode);
+    }
+
     private sealed class StubXApiExecutor : IXApiInProcessExecutor
     {
         private readonly string _json;
 
-        public StubXApiExecutor(string json)
+        public StubXApiExecutor(string json, bool succeeded = true)
         {
             _json = json;
+            _succeeded = succeeded;
         }
+
+        private readonly bool _succeeded;
 
         public XApiExecutionRequest LastRequest { get; private set; }
 
@@ -159,8 +253,37 @@ public class UcpCatalogServiceTests
 
             return Task.FromResult(new XApiExecutionResult
             {
-                Succeeded = true,
+                Succeeded = _succeeded,
                 Json = _json,
+            });
+        }
+
+        public Task<XApiExecutionResult> ExecuteCart(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        {
+            return Execute(request, cancellationToken);
+        }
+
+        public Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        {
+            return Execute(request, cancellationToken);
+        }
+    }
+
+    private sealed class SequenceXApiExecutor : IXApiInProcessExecutor
+    {
+        private readonly Queue<string> _responses;
+
+        public SequenceXApiExecutor(params string[] responses)
+        {
+            _responses = new Queue<string>(responses);
+        }
+
+        public Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new XApiExecutionResult
+            {
+                Succeeded = true,
+                Json = _responses.Dequeue(),
             });
         }
 
@@ -240,6 +363,33 @@ public class UcpCatalogServiceTests
               ]
             }
           }
+        }
+        """;
+
+    private const string PartialProductResponseJson = """
+        {
+          "data": {
+            "product": {
+              "id": "product-1",
+              "code": "PRODUCT-1",
+              "name": "Product 1",
+              "properties": [
+                { "name": "ReleaseYear", "value": null }
+              ],
+              "variations": []
+            },
+            "products": {
+              "items": [
+                { "id": "product-1", "variations": [] }
+              ]
+            }
+          },
+          "errors": [
+            {
+              "message": "Error trying to resolve field 'value'.",
+              "path": ["product", "properties", 0, "value"]
+            }
+          ]
         }
         """;
 }

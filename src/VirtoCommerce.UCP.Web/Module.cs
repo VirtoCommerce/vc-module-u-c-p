@@ -1,18 +1,22 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using GraphQL.MicrosoftDI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using VirtoCommerce.Platform.Core.Modularity;
+using VirtoCommerce.Platform.Core.Security;
+using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Services;
 using VirtoCommerce.UCP.ExperienceApi;
 using VirtoCommerce.UCP.Web.Filters;
+using VirtoCommerce.UCP.Web.Mcp;
 using VirtoCommerce.UCP.Web.Services;
-using VirtoCommerce.Platform.Core.Modularity;
-using VirtoCommerce.Platform.Core.Security;
-using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.Xapi.Core.Extensions;
 using VirtoCommerce.Xapi.Core.Infrastructure;
 
@@ -32,6 +36,21 @@ public class Module : IModule, IHasConfiguration
         {
             options.Filters.Add<UcpExceptionFilter>();
         });
+        serviceCollection
+            .AddMcpServer(options =>
+            {
+                options.ServerInfo = new()
+                {
+                    Name = "Virto Commerce UCP Instructions",
+                    Version = ModuleConstants.UcpVersion,
+                };
+                options.ServerInstructions = ModuleConstants.McpInstructions;
+            })
+            .WithHttpTransport(options =>
+            {
+                options.Stateless = true;
+            })
+            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, CreateMcpToolSerializerOptions());
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();
@@ -47,6 +66,17 @@ public class Module : IModule, IHasConfiguration
         });
 
         serviceCollection.AddSingleton<ScopedSchemaFactory<XapiAssemblyMarker>>();
+    }
+
+    private static JsonSerializerOptions CreateMcpToolSerializerOptions()
+    {
+        return new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
+            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
+        };
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)

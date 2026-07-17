@@ -60,6 +60,7 @@ public class UcpProfileServiceTests
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.GetCart && x.Status == "available");
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.UpdateCart && x.Method == "PUT" && x.Status == "available");
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.CreateCheckout && x.Status == "available");
+        Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.CheckoutAndHandoff && x.Method == "MCP" && x.Path == ModuleConstants.Endpoints.Mcp && x.Status == "available");
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.GetPaymentHandlers && x.Status == "available");
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.HandoffCheckout && x.Status == "available" && x.Description.Contains("shipping_address is expected", System.StringComparison.Ordinal));
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.UpdateCheckout && x.Status == "available" && x.Description.Contains("new handoff URL is required", System.StringComparison.Ordinal));

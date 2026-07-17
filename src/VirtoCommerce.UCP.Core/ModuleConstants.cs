@@ -8,6 +8,39 @@ public static class ModuleConstants
     public const string UcpVersion = "1.0";
     public const string Source = "UCP";
     public const string Platform = "VirtoCommerce";
+    public const string McpInstructions = """
+        This MCP endpoint exposes Virto Commerce UCP tools for the storefront/platform where this MCP server is installed.
+        Use typed MCP tools for commerce operations.
+        Available tools: get_store_capabilities, search_products, get_product, create_cart, list_carts, get_cart, update_cart, create_checkout, update_checkout, checkout_and_handoff, get_payment_handlers, handoff_checkout, list_countries, resolve_country, list_regions, and track_order.
+        Do not pass storefront URLs to MCP tools. This MCP server already represents the target Virto Commerce UCP installation.
+        Do not infer another target storefront from the MCP transport URL or user-provided links.
+        Commerce tools execute local UCP services directly in this platform process.
+        Do not use browser/web/search tools to execute UCP operations when MCP tools are available.
+        MCP tool calls are stateless. Arguments from earlier calls are never carried automatically.
+        Before every tool call, build a fresh argument object, check the tool's required schema, and explicitly repeat every required identifier and nested field.
+        For every catalog, cart, or checkout tool that exposes store_id, always pass it. Reuse the exact store_id from the catalog call that returned the selected product and continue using it for cart and checkout calls.
+        When store_id, currency, or language are unknown, call get_store_capabilities first and use the returned store metadata.
+        If this installation exposes multiple stores without a default, use an explicit store_id from the user or ask the user to choose.
+        Before get_product, require id or product_id and store_id. Before create_cart, require store_id and non-empty line_items; every new line item requires product_id and quantity greater than zero.
+        After any cart response, preserve cart.id, cart.store_id, and cart.buyer_id.
+        For later cart and checkout calls, explicitly repeat cart_id, store_id, and buyer_id whenever those arguments are exposed; never rely on conversational memory to carry them.
+        Before update_cart, require the saved cart_id and the complete desired line_items state. Before list_carts, require buyer_id and preserve the same store_id used by the buyer's cart.
+        For shopping flows, use MCP tools directly: search products, create or update cart, resolve country/regions, then use checkout_and_handoff when the buyer is ready for hosted checkout.
+        Delivery addresses belong in structured shipping_address fields, not notes.
+        Before create_checkout or checkout_and_handoff, require the saved cart_id, store_id, and buyer_id when available. Before update_checkout, get_payment_handlers, or handoff_checkout, require the saved checkout_id.
+        Before create_checkout, update_checkout, checkout_and_handoff, or handoff_checkout for physical goods, require shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code.
+        Never send a partial shipping_address.
+        Ask for every missing value and do not call a checkout or handoff tool yet; never invent address data.
+        Resolve country with resolve_country and, when the country defines regions, resolve region_id with list_regions before checkout. City remains free text.
+        Before resolve_country, require query. Before list_regions, require country_id. Before track_order, require at least one of order_id, order_number, or the saved cart_id.
+        Treat price.amount as the current sell price and list_price.amount as the pre-discount reference price.
+        list_carts requires an explicit buyer_id. Preserve and reuse cart.buyer_id from cart responses; do not request a global anonymous cart list. buyer_id is buyer scope, not Platform authentication.
+        update_cart accepts the complete desired line_items state, not a delta. Reuse the existing cart_id and buyer_id; never call create_cart as a fallback for changing an existing cart.
+        After create_cart or update_cart, inspect line_items and messages. If an expected line is missing, call get_cart once to account for asynchronous settling; do not claim that an item was added unless the re-read contains it.
+        Read-only xapi_execution_failed errors from search_products or get_product may be transient; retry the same read-only tool once. Do not automatically retry mutating cart or checkout tools.
+        For hosted checkout, return checkout.continue_url to the buyer and keep cart_id for later track_order.
+        After hosted checkout, use the saved cart_id and buyer_id with track_order when the user asks about the order; do not require an order number when those saved identifiers are available.
+        """;
 
     public static class Capabilities
     {
@@ -47,6 +80,7 @@ public static class ModuleConstants
     public static class Endpoints
     {
         public const string Discovery = "/.well-known/ucp";
+        public const string Mcp = "/ucp/mcp";
         public const string CatalogSearch = "/ucp/v1/catalog/search";
         public const string CatalogProduct = "/ucp/v1/catalog/products/{id}";
         public const string CartCreate = "/ucp/v1/carts";
@@ -65,6 +99,26 @@ public static class ModuleConstants
         public const string StorefrontRestore = "/ucp/v1/internal/handoff/restore";
     }
 
+    public static class Operations
+    {
+        public const string GetStoreCapabilities = "get_store_capabilities";
+        public const string SearchProducts = "search_products";
+        public const string GetProduct = "get_product";
+        public const string CreateCart = "create_cart";
+        public const string ListCarts = "list_carts";
+        public const string GetCart = "get_cart";
+        public const string UpdateCart = "update_cart";
+        public const string CreateCheckout = "create_checkout";
+        public const string UpdateCheckout = "update_checkout";
+        public const string CheckoutAndHandoff = "checkout_and_handoff";
+        public const string GetPaymentHandlers = "get_payment_handlers";
+        public const string HandoffCheckout = "handoff_checkout";
+        public const string TrackOrder = "track_order";
+        public const string ListCountries = "list_countries";
+        public const string ResolveCountry = "resolve_country";
+        public const string ListRegions = "list_regions";
+    }
+
     public static class McpTools
     {
         public const string GetStoreCapabilities = "get_store_capabilities";
@@ -76,6 +130,7 @@ public static class ModuleConstants
         public const string UpdateCart = "update_cart";
         public const string CreateCheckout = "create_checkout";
         public const string UpdateCheckout = "update_checkout";
+        public const string CheckoutAndHandoff = "checkout_and_handoff";
         public const string GetPaymentHandlers = "get_payment_handlers";
         public const string HandoffCheckout = "handoff_checkout";
         public const string TrackOrder = "track_order";

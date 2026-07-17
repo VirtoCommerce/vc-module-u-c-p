@@ -1,46 +1,197 @@
-# Virto Commerce UCP Module
+# Virto Commerce UCP Module (Preview)
 
 The Virto Commerce UCP module exposes HTTP APIs for Universal Commerce Protocol (UCP) on top of existing Virto Commerce Platform capabilities.
 
 It provides public UCP endpoints for discovery, catalog, cart, checkout handoff, geography, and order tracking operations. Requests are adapted to in-process Virto Commerce XAPI calls and platform services without an additional HTTP hop inside the platform process.
+It also exposes a Streamable HTTP MCP endpoint at `/ucp/mcp`.
 
 ## Overview
 
-`VirtoCommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients and MCP tools while delegating commerce behavior to existing Virto Commerce modules.
-
-The current implementation covers:
-
-- UCP discovery profile: `/.well-known/ucp`.
-- Catalog search through in-process XCatalog GraphQL.
-- Product detail lookup through in-process XCatalog GraphQL.
-- Cart assembly through XCart GraphQL: create, buyer-scoped list, get, and full-state update.
-- Checkout snapshot and hosted handoff with address prefill.
-- Temporary checkout handoff sessions stored through `IDistributedCache` with TTL. Redis is recommended for production; an in-memory distributed cache fallback is registered for local and single-node deployments.
-- Order tracking through Orders module services by order id, order number, or cart id after handoff.
-- Geography lookup through the platform `ICountriesService`.
-- Structured UCP errors.
-- Buyer context propagation from HTTP headers.
+`VirtoCommerce.UCP` is a protocol adapter module. It does not replace the Catalog, Cart, Orders, XAPI, Store, or Marketing modules. It provides a compact UCP-oriented HTTP surface for external clients while delegating commerce behavior to existing Virto Commerce modules.
 
 Canonical public UCP endpoints are published without the `/api` prefix.
 
-## Module Structure
+## Key Features
 
-| Project | Purpose |
+* **UCP discovery profile** — `/.well-known/ucp` publishes supported capabilities, default store metadata, endpoint metadata, headers, auth shape, integration guidance, payment handlers, and structured error codes
+* **Catalog search and product details** — catalog search and product detail lookup through in-process XCatalog GraphQL
+* **Cart assembly** — create, buyer-scoped list, get, and full-state update through XCart GraphQL with UCP replacement semantics
+* **Checkout handoff** — checkout snapshot and hosted handoff with address prefill; temporary handoff sessions stored through `IDistributedCache` with TTL (Redis is recommended for production; an in-memory fallback is registered for local and single-node deployments)
+* **Order tracking** — order status, totals, line items, and shipment tracking by order id, order number, or cart id after handoff
+* **Geography lookup** — country and region resolution through the platform `ICountriesService` for checkout address normalization
+* **Streamable HTTP MCP server** — `/ucp/mcp` with typed UCP commerce tools for the installed storefront/platform, built on the official C# MCP SDK
+* **Buyer context propagation** — header-based B2B buyer delegation through `X-Buyer-User-Id` and `X-Buyer-Organization-Id`
+* **Structured UCP errors** — machine-readable error codes with correlation id support
+
+> **Note:** New UCP features are coming soon — delivery and payment method selection, carrier-level shipment tracking, faceted catalog filters, and OAuth2/OIDC buyer delegation. See the [Roadmap](#roadmap).
+
+## Quickstart: Connect Virto Start Cloud to Claude Desktop
+
+This is the complete partner-facing setup for an existing Virto Start environment deployed in Virto Cloud. The Storefront host exposes the UCP endpoints, while Virto Cloud routes the requests to the Platform application where this module runs.
+
+Before starting, identify the exact Virto Commerce Store ID and the public Storefront host. The examples below use `B2B-store` and `store.example.com`.
+
+### 1. Install the module
+
+Install the `VirtoCommerce.UCP` module in the Virto Start **Platform application**. The required module dependencies are listed in [Dependencies](#dependencies).
+
+### 2. Update the Virto Cloud environment
+
+In the Virto Cloud deployment repository, update the target environment in `infra/environments.yml`. Add the UCP settings under `platform.config`, then route `/ucp` and `/.well-known/ucp` from the Storefront host to `platform`:
+
+```yaml
+platform:
+  config:
+    UCP__DefaultStoreId: B2B-store
+    UCP__DefaultCurrency: USD
+    UCP__DefaultCultureName: en-US
+    UCP__StorefrontOrigin: "https://store.example.com"
+    UCP__UcpBaseUrl: "https://store.example.com/ucp/v1"
+    UCP__HandoffUrlTemplate: "https://store.example.com/checkout?ucp_session={token}"
+    UCP__HandoffTokenTtlMinutes: 15
+
+routes:
+  - host: store.example.com
+    root: B2B-store
+    paths:
+      - path: /ucp
+        route: platform
+      - path: /.well-known/ucp
+        route: platform
+```
+
+Replace `B2B-store` with the exact Store ID and `store.example.com` with the Virto Start Storefront host. Do not use the store display name as `UCP__DefaultStoreId`.
+
+The `/ucp` route covers `/ucp/mcp` and all `/ucp/v1/*` endpoints. `/.well-known/ucp` needs its own route because it is outside the `/ucp` prefix.
+
+Deploy the updated Virto Cloud environment. This restarts the Platform with the UCP configuration and applies the public routes.
+
+### 3. Verify the Virto Start endpoint
+
+Open the Storefront discovery URL in a browser:
+
+```text
+https://store.example.com/.well-known/ucp
+```
+
+Before connecting Claude, verify that the response contains:
+
+- the expected `default_store_id`;
+- the expected store currency, language, and storefront URL;
+- `mcp_tools` with tools such as `get_store_capabilities` and `search_products`;
+- `endpoints.ucp_base_url` equal to `https://store.example.com/ucp/v1`.
+
+The remote MCP URL is:
+
+```text
+https://store.example.com/ucp/mcp
+```
+
+The Storefront host must be publicly reachable from Anthropic's cloud. A host restricted to a VPN or private network cannot be used as a Claude remote connector unless the network allows Anthropic's published IP ranges.
+
+### 4. Add the connector to Claude Desktop
+
+Remote MCP servers are configured as Claude custom connectors. Do **not** put this remote URL in `claude_desktop_config.json`; that file is for locally launched MCP servers.
+
+For an individual Claude plan:
+
+1. Open Claude Desktop and go to **Customize > Connectors**.
+2. Select **+ > Add custom connector**.
+3. Set the name to `Virto Commerce UCP`.
+4. Set the remote MCP server URL to `https://store.example.com/ucp/mcp`.
+5. Select **Add**.
+6. In a new conversation, select **+ > Connectors** and enable `Virto Commerce UCP`.
+
+For a Team or Enterprise plan, an Owner must first add the URL under **Organization settings > Connectors**. Each user can then connect to and enable it for a conversation.
+
+See Anthropic's [remote MCP custom connector guide](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp) for the current Claude UI and network requirements.
+
+### 5. Run the first Claude smoke test
+
+Start a new Claude conversation with the connector enabled and send:
+
+```text
+Use the Virto Commerce UCP connector. First call get_store_capabilities.
+Then search for products matching "printer". Use the default store, currency,
+and language published by the server. Ask me to select a store only if the
+server publishes multiple stores and no default_store_id.
+```
+
+Claude should call `get_store_capabilities` and then `search_products` without asking for values already published by the server.
+
+### Troubleshooting
+
+| Symptom | Check |
 | --- | --- |
-| `VirtoCommerce.UCP.Core` | Protocol models, service contracts, module constants, options, and errors. |
-| `VirtoCommerce.UCP.Data` | Provider-neutral UCP application services and integration logic. |
-| `VirtoCommerce.UCP.ExperienceApi` | XAPI schema marker for the module. |
-| `VirtoCommerce.UCP.Web` | Module entry point, controllers, filters, GraphQL executor, and DI registrations. |
-| `VirtoCommerce.UCP.Tests` | Unit tests for discovery, catalog, cart, checkout handoff, geography, and order tracking behavior. |
+| Claude cannot connect | Confirm that the Cloud Environment routes `/ucp` to `platform`, the Storefront host is public, and the updated environment was deployed. |
+| `missing_store_id` | Confirm that `platform.config.UCP__DefaultStoreId` contains the exact Store ID and the updated environment was deployed. |
+| Search returns no products | Confirm that the store is open, the catalog is assigned to the store, prices and inventory exist, and the search index has been built. |
+| Checkout opens the wrong host | Configure `Store.SecureUrl` / `Store.Url`, or set `UCP__StorefrontOrigin` and `UCP__HandoffUrlTemplate`. |
+| A Team or Enterprise user cannot add the connector | Ask an organization Owner to add the custom connector first. |
 
-The module does not define a UCP database model and does not run module database migrations.
+## Configuration
+
+Configuration is read from the `UCP` section:
+
+```json
+{
+  "UCP": {
+    "DefaultStoreId": "store-acme",
+    "DefaultCurrency": "USD",
+    "DefaultCultureName": "en-US",
+    "UcpBaseUrl": "https://store.example.com/ucp/v1",
+    "StorefrontOrigin": "https://store.example.com",
+    "HandoffUrlTemplate": "https://store.example.com/checkout?ucp_session={token}",
+    "HandoffTokenTtlMinutes": 15,
+    "AnonymousCatalog": true
+  }
+}
+```
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `UCP:DefaultStoreId` | String | — | Virto Commerce Store ID used when the client does not pass `store_id`. Use the exact Store ID, not the display name. |
+| `UCP:DefaultCurrency` | String | — | Default currency code for catalog, cart, and checkout operations. |
+| `UCP:DefaultCultureName` | String | — | Default culture, for example `en-US`. |
+| `UCP:UcpBaseUrl` | String | — | Public base URL of the UCP API published in the discovery profile. |
+| `UCP:StorefrontOrigin` | String | — | Fallback storefront origin for hosted checkout URLs in environments without Store URLs. |
+| `UCP:HandoffUrlTemplate` | String | — | Explicit override for the hosted checkout handoff URL. `{token}` is replaced with the `ucp_session` token. |
+| `UCP:HandoffTokenTtlMinutes` | Integer | `15` | Absolute expiration of temporary checkout handoff sessions in the distributed cache. |
+| `UCP:AnonymousCatalog` | Boolean | `true` | Allows anonymous catalog search and product detail requests. |
+
+If `DefaultStoreId` is not configured, discovery reads open stores from the Store module. If one store is found, `/.well-known/ucp` returns it as `default_store_id`, `store`, and the only `stores[]` item. If multiple stores are found, discovery returns them in `stores[]` and the client must choose a store explicitly.
+
+Checkout handoff URLs are built from the Virto Commerce Store URL (`Store.Url` / `Store.SecureUrl`) for the selected default store. `UCP:StorefrontOrigin` is a fallback for environments without Store URLs, and `UCP:HandoffUrlTemplate` is an explicit override.
+
+### Application Settings
+
+The module registers the following platform settings:
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `UCP.Enabled` | Boolean | `false` | Enables UCP module functionality. Registered in the platform settings under **UCP > General**; not yet enforced by the current preview endpoints. |
+
+### Permissions
+
+The module registers the following permissions in the **UCP** group:
+
+| Permission | Description |
+| --- | --- |
+| `ucp:access` | Access UCP module resources |
+| `ucp:create` | Create UCP data |
+| `ucp:read` | View UCP data |
+| `ucp:update` | Update UCP data |
+| `ucp:delete` | Delete UCP data |
+
+Public UCP protocol endpoints (`/.well-known/ucp`, `/ucp/v1/*`, `/ucp/mcp`) are anonymous protocol surfaces; these permissions are reserved for the module's administrative capabilities.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    Client["UCP / MCP client"]
-    UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*"]
+    Client["UCP client"]
+    McpClient["MCP client"]
+    UcpHttp["UCP HTTP API<br/>/.well-known/ucp<br/>/ucp/v1/*<br/>/ucp/mcp"]
     Controllers["ASP.NET Core controllers"]
     Services["UCP services<br/>VirtoCommerce.UCP.Data"]
     Cache["Distributed cache<br/>Redis-backed or in-memory fallback<br/>handoff sessions"]
@@ -49,6 +200,7 @@ flowchart LR
     Modules["Commerce modules<br/>XCatalog, XCart, Orders,<br/>Marketing, Store, Pricing, Inventory"]
 
     Client --> UcpHttp
+    McpClient --> UcpHttp
     UcpHttp --> Controllers
     Controllers --> Services
     Services --> Cache
@@ -57,7 +209,7 @@ flowchart LR
     XApi --> Modules
 ```
 
-## Request Flow
+### Request Flow
 
 1. A client calls a canonical UCP endpoint.
 2. The controller accepts the HTTP request and delegates work to a UCP service.
@@ -74,6 +226,18 @@ Buyer delegation is header-based:
 
 The service adds buyer claims to the principal used for XAPI execution, so delegated B2B context flows through existing Virto Commerce authorization and context mechanisms.
 
+## Module Structure
+
+| Project | Purpose |
+| --- | --- |
+| `VirtoCommerce.UCP.Core` | Protocol models, service contracts, module constants, options, and errors. |
+| `VirtoCommerce.UCP.Data` | Provider-neutral UCP application services and integration logic. |
+| `VirtoCommerce.UCP.ExperienceApi` | XAPI schema marker for the module. |
+| `VirtoCommerce.UCP.Web` | Module entry point, controllers, filters, GraphQL executor, and DI registrations. |
+| `VirtoCommerce.UCP.Tests` | Unit tests for discovery, catalog, cart, checkout handoff, geography, and order tracking behavior. |
+
+The module does not define a UCP database model and does not run module database migrations.
+
 ## Dependencies
 
 The module manifest declares these runtime dependencies:
@@ -89,31 +253,6 @@ The module manifest declares these runtime dependencies:
 
 Target framework: `.NET 10`.
 
-## Configuration
-
-Configuration is read from the `UCP` section:
-
-```json
-{
-  "UCP": {
-    "DefaultStoreId": "store-acme",
-    "DefaultCurrency": "USD",
-    "DefaultCultureName": "en-US",
-    "UcpBaseUrl": "https://localhost:5001/ucp/v1",
-    "StorefrontOrigin": "https://localhost:3000",
-    "HandoffUrlTemplate": "https://localhost:3000/checkout?ucp_session={token}",
-    "HandoffTokenTtlMinutes": 15,
-    "AnonymousCatalog": true
-  }
-}
-```
-
-If `DefaultStoreId` is not configured, discovery reads open stores from the Store module. If one store is found, `/.well-known/ucp` returns it as `default_store_id`, `store`, and the only `stores[]` item. If multiple stores are found, discovery returns them in `stores[]` and the client must choose a store explicitly.
-
-Checkout handoff URLs are built from the Virto Commerce Store URL (`Store.Url` / `Store.SecureUrl`) for the selected default store. `UCP:StorefrontOrigin` is a fallback for environments without Store URLs, and `UCP:HandoffUrlTemplate` is an explicit override.
-
-The module registers the platform setting `UCP.Enabled`.
-
 ## Web API
 
 ### Discovery
@@ -122,9 +261,9 @@ The module registers the platform setting `UCP.Enabled`.
 GET /.well-known/ucp
 ```
 
-Returns the UCP profile: supported capabilities, default store metadata, endpoint metadata, headers, auth shape, MCP tool names, integration guidance, payment handlers, and structured error codes.
+Returns the UCP profile: supported capabilities, default store metadata, endpoint metadata, headers, auth shape, integration guidance, payment handlers, and structured error codes.
 
-`mcp_tools` contains only callable tools. Planned operations remain in `endpoints.operations` but are not advertised as MCP tools.
+UCP operations are advertised as HTTP endpoints in `endpoints.operations`.
 
 ### Catalog Search
 
@@ -221,6 +360,7 @@ The current checkout flow is hosted-only:
 - `create_checkout` creates a checkout snapshot from the cart.
 - If the request contains `shipping_address` or `billing_address`, the module applies them to XCart before creating the snapshot.
 - `update_checkout` updates address hints before payment and applies addresses to XCart.
+- `checkout_and_handoff` creates the checkout snapshot and immediately returns the hosted checkout `continue_url`; MCP clients should prefer it when the buyer is ready to pay or continue to storefront checkout.
 - `handoff_checkout` returns a `continue_url` with an opaque `ucp_session`.
 - `storefront_restore` validates `ucp_session`, reads the session payload from distributed cache, checks expiration, and returns cart and checkout context to the storefront.
 - Shipping method and payment details are completed in storefront checkout.
@@ -290,6 +430,38 @@ After hosted handoff, the client usually does not know `order_id` yet. The prima
 
 If the order has not been created yet or is not found among recent orders, the endpoint returns the structured error `order_not_found`.
 
+## MCP Server
+
+```http
+POST /ucp/mcp
+GET /ucp/mcp
+```
+
+The MCP server uses the official C# SDK `ModelContextProtocol.AspNetCore` with Streamable HTTP transport in stateless mode.
+
+The MCP server exposes typed UCP commerce tools for the Virto Commerce storefront/platform where this module is installed:
+
+- `get_store_capabilities`
+- `search_products`
+- `get_product`
+- `create_cart`
+- `list_carts`
+- `get_cart`
+- `update_cart`
+- `create_checkout`
+- `update_checkout`
+- `checkout_and_handoff`
+- `get_payment_handlers`
+- `handoff_checkout`
+- `list_countries`
+- `resolve_country`
+- `list_regions`
+- `track_order`
+
+Commerce tools do not accept storefront URLs. The MCP endpoint itself represents the target Virto Commerce UCP installation, and tools execute the module's local UCP services directly inside the platform process.
+
+This follows the hosted-commerce MCP pattern: install or configure the MCP remote for the storefront/platform you want the agent to operate on, then use the typed tools for search, cart, checkout, geography, handoff, and order tracking.
+
 ## Error Model
 
 Known UCP error codes:
@@ -306,8 +478,8 @@ Responses include correlation id when available. The module reads `X-Correlation
 ## Build and Test
 
 ```powershell
-dotnet build C:\Source\vc-modules\vc-module-u-c-p\VirtoCommerce.UCP.sln
-dotnet test C:\Source\vc-modules\vc-module-u-c-p\VirtoCommerce.UCP.sln --no-build
+dotnet build VirtoCommerce.UCP.sln
+dotnet test VirtoCommerce.UCP.sln --no-build
 ```
 
 Expected status:
@@ -341,12 +513,26 @@ Recommended smoke checks after installation:
 
 ## Roadmap
 
-Near-term implementation areas:
+New UCP features are coming soon. Near-term implementation areas:
 
 - Delivery and payment method selection after address-based available methods are known.
 - Full carrier-level shipment tracking events when carrier integration is available.
 - Faceted catalog filter schema for richer product discovery.
 - OAuth2/OIDC buyer delegation instead of header-only context.
+
+## Documentation
+
+* [Virto Commerce Documentation](https://docs.virtocommerce.org)
+* [GraphQL Storefront API Reference (xAPI)](https://docs.virtocommerce.org/platform/developer-guide/GraphQL-Storefront-API-Reference-xAPI/)
+* [View on GitHub](https://github.com/VirtoCommerce/vc-module-ucp/)
+
+## References
+
+* [Deployment](https://docs.virtocommerce.org/platform/developer-guide/Tutorials-and-How-tos/Tutorials/deploy-module-from-source-code/)
+* [Installation](https://docs.virtocommerce.org/platform/user-guide/modules-installation/)
+* [Home](https://virtocommerce.com)
+* [Community](https://www.virtocommerce.org)
+* [Download latest release](https://github.com/VirtoCommerce/vc-module-ucp/releases/latest)
 
 ## License
 

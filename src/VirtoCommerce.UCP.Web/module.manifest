@@ -34,6 +34,7 @@
 
   <assemblyFile>VirtoCommerce.UCP.Web.dll</assemblyFile>
   <moduleType>VirtoCommerce.UCP.Web.Module, VirtoCommerce.UCP.Web</moduleType>
+  <startupType>VirtoCommerce.UCP.Web.UcpMcpStartup, VirtoCommerce.UCP.Web</startupType>
 
   <releaseNotes>Initial UCP discovery and XAPI in-process catalog foundation.</releaseNotes>
   <copyright>Copyright © 2026 VirtoCommerce. All rights reserved</copyright>
