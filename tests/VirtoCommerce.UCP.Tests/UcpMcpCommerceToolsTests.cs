@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.Json;
@@ -11,6 +12,7 @@ using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Web.Mcp;
+using VirtoCommerce.UCP.Web.Mcp.Models;
 using Xunit;
 using UcpModule = VirtoCommerce.UCP.Web.Module;
 
@@ -167,6 +169,51 @@ public class UcpMcpCommerceToolsTests
     }
 
     [Fact]
+    public void McpToolSchemas_KeepFlatCommerceArguments()
+    {
+        using var services = new ServiceCollection()
+            .AddSingleton<IUcpProfileService>(_ => null)
+            .AddSingleton<IUcpCatalogService>(_ => null)
+            .AddSingleton<IUcpCartService>(_ => null)
+            .AddSingleton<IUcpCheckoutService>(_ => null)
+            .AddSingleton<IUcpOrderService>(_ => null)
+            .BuildServiceProvider();
+        var options = new McpServerToolCreateOptions
+        {
+            Services = services,
+            SerializerOptions = CreateMcpToolSerializerOptions(),
+        };
+        var expectedSchemas = new Dictionary<string, string[]>
+        {
+            [nameof(UcpMcpCommerceTools.SearchProducts)] = ["query", "store_id", "currency", "language", "price_min", "price_max", "limit"],
+            [nameof(UcpMcpCommerceTools.GetProduct)] = ["id", "product_id", "store_id", "currency", "language"],
+            [nameof(UcpMcpCommerceTools.CreateCart)] = ["line_items", "store_id", "currency", "language", "buyer_id", "organization_id", "cart_name", "cart_type", "coupons"],
+            [nameof(UcpMcpCommerceTools.ListCarts)] = ["store_id", "currency", "language", "buyer_id", "organization_id", "cart_name", "cart_type", "cursor", "limit", "sort"],
+            [nameof(UcpMcpCommerceTools.GetCart)] = ["cart_id", "store_id", "currency", "language", "buyer_id", "organization_id"],
+            [nameof(UcpMcpCommerceTools.UpdateCart)] = ["cart_id", "line_items", "store_id", "currency", "language", "buyer_id", "organization_id", "cart_name", "cart_type", "coupons"],
+            [nameof(UcpMcpCommerceTools.CreateCheckout)] = ["cart_id", "store_id", "currency", "language", "buyer_id", "organization_id", "buyer", "buyer_email", "buyer_name", "buyer_phone", "shipping_address", "billing_address", "payment_handler", "notes"],
+            [nameof(UcpMcpCommerceTools.UpdateCheckout)] = ["checkout_id", "cart_id", "store_id", "currency", "language", "buyer_id", "organization_id", "buyer", "buyer_email", "buyer_name", "buyer_phone", "shipping_address", "billing_address", "payment_handler", "notes"],
+            [nameof(UcpMcpCommerceTools.CheckoutAndHandoff)] = ["cart_id", "store_id", "currency", "language", "buyer_id", "organization_id", "buyer", "buyer_email", "buyer_name", "buyer_phone", "shipping_address", "billing_address", "payment_handler", "notes"],
+            [nameof(UcpMcpCommerceTools.HandoffCheckout)] = ["checkout_id", "cart_id", "store_id", "currency", "language", "buyer_id", "organization_id", "buyer", "buyer_email", "buyer_name", "buyer_phone", "shipping_address", "billing_address", "payment_handler", "notes"],
+            [nameof(UcpMcpCommerceTools.TrackOrder)] = ["order_id", "order_number", "cart_id", "store_id", "currency", "language", "buyer_id", "organization_id"],
+        };
+
+        foreach (var (methodName, expectedProperties) in expectedSchemas)
+        {
+            var method = typeof(UcpMcpCommerceTools).GetMethod(methodName);
+            var tool = McpServerTool.Create(method, target: null, options);
+            var actualProperties = tool.ProtocolTool.InputSchema
+                .GetProperty("properties")
+                .EnumerateObject()
+                .Select(property => property.Name)
+                .Order()
+                .ToArray();
+
+            Assert.Equal(expectedProperties.Order(), actualProperties);
+        }
+    }
+
+    [Fact]
     public void McpInstructions_DescribeInstalledStorefrontMode()
     {
         Assert.Contains("where this MCP server is installed", ModuleConstants.McpInstructions);
@@ -244,6 +291,56 @@ public class UcpMcpCommerceToolsTests
         Assert.Equal("en-US", catalogService.LastRequest.Context.Language);
     }
 
+    [Fact]
+    public async Task SearchProducts_UsesConfiguredDefaultStoreWhenStoreIsOmitted()
+    {
+        var profileService = new StubProfileService(new UcpProfile
+        {
+            DefaultStoreId = "B2B-store",
+            Stores =
+            {
+                new UcpStoreProfile { Id = "store-acme", DefaultCurrency = "EUR", DefaultLanguage = "de-DE" },
+                new UcpStoreProfile { Id = "B2B-store", DefaultCurrency = "USD", DefaultLanguage = "en-US" },
+            },
+        });
+        var catalogService = new CaptureCatalogService();
+
+        await UcpMcpCommerceTools.SearchProducts(
+            profileService,
+            catalogService,
+            "printer",
+            cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal("B2B-store", catalogService.LastRequest.StoreId);
+        Assert.Equal("USD", catalogService.LastRequest.Currency);
+        Assert.Equal("en-US", catalogService.LastRequest.Language);
+    }
+
+    [Fact]
+    public async Task CheckoutAndHandoff_PreservesResolvedIdsAndNextStepArguments()
+    {
+        var profileService = new StubProfileService(new UcpProfile());
+        var checkoutService = new CaptureCheckoutService();
+
+        var result = Assert.IsType<UcpMcpCheckoutAndHandoffResult>(await UcpMcpCommerceTools.CheckoutAndHandoff(
+            profileService,
+            checkoutService,
+            cart_id: "cart-request",
+            store_id: "B2B-store",
+            language: "en-US",
+            buyer_id: "buyer-request",
+            cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal("checkout-1", checkoutService.HandoffCheckoutId);
+        Assert.Equal("cart-request", checkoutService.HandoffRequest.CartId);
+        Assert.Equal("cart-request", result.CartId);
+        Assert.Equal("buyer-service", result.BuyerId);
+        Assert.Equal("https://example.test/checkout", result.ContinueUrl);
+        Assert.Equal("cart-request", result.NextStepAfterPayment.Arguments["cart_id"]);
+        Assert.Equal("buyer-service", result.NextStepAfterPayment.Arguments["buyer_id"]);
+        Assert.Equal("en-US", result.NextStepAfterPayment.Arguments["language"]);
+    }
+
     private static string[] GetCommerceToolNames()
     {
         return typeof(UcpMcpCommerceTools)
@@ -301,6 +398,51 @@ public class UcpMcpCommerceToolsTests
         {
             LastRequest = request;
             return Task.FromResult(new UcpProductResponse());
+        }
+    }
+
+    private sealed class CaptureCheckoutService : IUcpCheckoutService
+    {
+        public string HandoffCheckoutId { get; private set; }
+        public UcpCheckoutRequest HandoffRequest { get; private set; }
+
+        public Task<UcpCheckoutResponse> CreateCheckout(UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new UcpCheckoutResponse
+            {
+                Checkout = new UcpCheckout
+                {
+                    Id = "checkout-1",
+                    CartId = "cart-service",
+                    Buyer = new UcpCheckoutBuyer { Id = "buyer-service" },
+                },
+            });
+        }
+
+        public Task<UcpCheckoutResponse> UpdateCheckout(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<UcpCheckoutResponse>(null);
+        }
+
+        public Task<UcpPaymentHandlersResponse> GetPaymentHandlers(string checkoutId, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<UcpPaymentHandlersResponse>(null);
+        }
+
+        public Task<UcpCheckoutHandoffResponse> HandoffCheckout(string checkoutId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
+        {
+            HandoffCheckoutId = checkoutId;
+            HandoffRequest = request;
+
+            return Task.FromResult(new UcpCheckoutHandoffResponse
+            {
+                Checkout = new UcpCheckout { ContinueUrl = "https://example.test/checkout" },
+            });
+        }
+
+        public Task<UcpHandoffRestoreResponse> RestoreHandoff(UcpHandoffRestoreRequest request, CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult<UcpHandoffRestoreResponse>(null);
         }
     }
 }

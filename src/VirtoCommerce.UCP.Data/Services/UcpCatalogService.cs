@@ -19,6 +19,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
 {
     private const int DefaultLimit = 10;
     private const int MaxLimit = 50;
+    private const decimal MinorUnitsPerMajorUnit = 100m;
 
     private readonly IXApiInProcessExecutor _xApiExecutor;
     private readonly UcpOptions _options;
@@ -223,35 +224,51 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
     protected virtual string BuildXCatalogFilter(UcpCatalogSearchRequest request)
     {
         var filters = new List<string>();
-
-        if (request.Filters?.Categories?.Count > 0)
-        {
-            filters.AddRange(request.Filters.Categories.Select(category => $"category.subtree:{category}"));
-        }
-
-        var minPrice = request.Filters?.Price?.Min;
-        var maxPrice = request.Filters?.Price?.Max;
-        if (minPrice.HasValue || maxPrice.HasValue)
-        {
-            var lower = minPrice.HasValue ? ToMajorUnits(minPrice.Value) : null;
-            var upper = maxPrice.HasValue ? ToMajorUnits(maxPrice.Value) : null;
-            var leftBracket = minPrice.HasValue ? "[" : "(";
-            var rightBracket = maxPrice.HasValue ? "]" : ")";
-            var range = (minPrice.HasValue, maxPrice.HasValue) switch
-            {
-                (true, true) => $"{lower} TO {upper}",
-                (true, false) => $"{lower} TO",
-                _ => $"TO {upper}",
-            };
-            filters.Add($"price:{leftBracket}{range}{rightBracket}");
-        }
+        AddCategoryFilters(filters, request.Filters?.Categories);
+        AddPriceFilter(filters, request.Filters?.Price);
 
         return filters.Count == 0 ? null : string.Join(" ", filters);
     }
 
+    private static void AddCategoryFilters(ICollection<string> filters, IList<string> categories)
+    {
+        if (categories?.Count > 0)
+        {
+            foreach (var category in categories)
+            {
+                filters.Add($"category.subtree:{category}");
+            }
+        }
+    }
+
+    private static void AddPriceFilter(ICollection<string> filters, UcpPriceFilter price)
+    {
+        if (price?.Min is null && price?.Max is null)
+        {
+            return;
+        }
+
+        var lower = price.Min.HasValue ? ToMajorUnits(price.Min.Value) : null;
+        var upper = price.Max.HasValue ? ToMajorUnits(price.Max.Value) : null;
+        var leftBracket = price.Min.HasValue ? "[" : "(";
+        var rightBracket = price.Max.HasValue ? "]" : ")";
+
+        filters.Add($"price:{leftBracket}{BuildPriceRange(lower, upper)}{rightBracket}");
+    }
+
+    private static string BuildPriceRange(string lower, string upper)
+    {
+        if (lower == null)
+        {
+            return $"TO {upper}";
+        }
+
+        return upper == null ? $"{lower} TO" : $"{lower} TO {upper}";
+    }
+
     private static string ToMajorUnits(long amount)
     {
-        return (amount / 100m).ToString(CultureInfo.InvariantCulture);
+        return (amount / MinorUnitsPerMajorUnit).ToString(CultureInfo.InvariantCulture);
     }
 
     protected virtual UcpProduct ReadProduct(JsonElement element)

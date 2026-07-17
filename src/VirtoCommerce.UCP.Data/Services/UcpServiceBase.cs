@@ -115,23 +115,44 @@ public abstract class UcpServiceBase
         }
 
         var document = JsonDocument.Parse(result.Json);
-        var hasErrors = document.RootElement.TryGetProperty("errors", out var errors) &&
-            errors.ValueKind == JsonValueKind.Array &&
-            errors.GetArrayLength() > 0;
-        var hasBlockingErrors = hasErrors &&
-            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
+        var hasErrors = TryGetGraphQlErrors(document.RootElement, out var errors);
 
-        if (hasBlockingErrors || (!result.Succeeded && !hasErrors))
+        if (HasBlockingGraphQlErrors(errors, canTolerateError) || IsFailedWithoutGraphQlErrors(result, hasErrors))
         {
-            var message = errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
-                ? ReadString(errors[0], "message") ?? $"{source} execution failed."
-                : $"{source} execution failed.";
+            var message = GetGraphQlErrorMessage(errors, source);
 
             document.Dispose();
             throw CreateException(ModuleConstants.ErrorCodes.XApiExecutionFailed, message, StatusCodes.Status502BadGateway);
         }
 
         return document;
+    }
+
+    private static bool TryGetGraphQlErrors(JsonElement root, out JsonElement errors)
+    {
+        return root.TryGetProperty("errors", out errors) &&
+            errors.ValueKind == JsonValueKind.Array &&
+            errors.GetArrayLength() > 0;
+    }
+
+    private static bool HasBlockingGraphQlErrors(JsonElement errors, Func<JsonElement, bool> canTolerateError)
+    {
+        return errors.ValueKind == JsonValueKind.Array &&
+            errors.GetArrayLength() > 0 &&
+            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
+    }
+
+    private static bool IsFailedWithoutGraphQlErrors(XApiExecutionResult result, bool hasErrors)
+    {
+        return !result.Succeeded && !hasErrors;
+    }
+
+    private static string GetGraphQlErrorMessage(JsonElement errors, string source)
+    {
+        var fallback = $"{source} execution failed.";
+        return errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
+            ? ReadString(errors[0], "message") ?? fallback
+            : fallback;
     }
 
     protected static string FirstNotEmpty(params string[] values)

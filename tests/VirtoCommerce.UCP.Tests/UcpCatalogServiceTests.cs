@@ -67,6 +67,7 @@ public class UcpCatalogServiceTests
         Assert.Equal("acme", executor.LastRequest.Variables["storeId"]);
         Assert.Equal("buyer-1", executor.LastRequest.Variables["userId"]);
         Assert.Equal("USD", executor.LastRequest.Variables["currencyCode"]);
+        Assert.Equal("price:(TO 150]", executor.LastRequest.Variables["filter"]);
         Assert.Contains(executor.LastRequest.User.Claims, x => x.Type == ClaimTypes.NameIdentifier && x.Value == "buyer-1");
         Assert.Contains(executor.LastRequest.User.Claims, x => x.Type == "organization_id" && x.Value == "org-1");
     }
@@ -198,6 +199,21 @@ public class UcpCatalogServiceTests
         var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
         Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
+    }
+
+    [Fact]
+    public async Task SearchProducts_FailedResponseWithEmptyErrors_UsesFallbackMessage()
+    {
+        var service = new UcpCatalogService(
+            new StubXApiExecutor("""{"errors":[]}""", succeeded: false),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() =>
+            service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
+        Assert.Equal("XCatalog execution failed.", exception.Message);
     }
 
     [Fact]
