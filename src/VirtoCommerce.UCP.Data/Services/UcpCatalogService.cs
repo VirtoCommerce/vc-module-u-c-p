@@ -230,7 +230,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         return filters.Count == 0 ? null : string.Join(" ", filters);
     }
 
-    private static void AddCategoryFilters(ICollection<string> filters, IList<string> categories)
+    private static void AddCategoryFilters(List<string> filters, IList<string> categories)
     {
         if (categories?.Count > 0)
         {
@@ -241,7 +241,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
         }
     }
 
-    private static void AddPriceFilter(ICollection<string> filters, UcpPriceFilter price)
+    private static void AddPriceFilter(List<string> filters, UcpPriceFilter price)
     {
         if (price?.Min is null && price?.Max is null)
         {
