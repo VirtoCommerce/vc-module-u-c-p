@@ -3,7 +3,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Data.Services;
 using VirtoCommerce.StoreModule.Core.Model;
@@ -30,6 +33,19 @@ public class UcpProfileServiceTests
 
         var profile = await service.GetProfile(TestContext.Current.CancellationToken);
 
+        Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Version);
+        Assert.Equal("success", profile.Ucp.Status);
+        Assert.Empty(profile.Ucp.PaymentHandlers);
+        Assert.Collection(
+            profile.Ucp.Services[ModuleConstants.Discovery.Service],
+            serviceProfile =>
+            {
+                Assert.Equal(ModuleConstants.DiscoveryVersion, serviceProfile.Version);
+                Assert.Equal("mcp", serviceProfile.Transport);
+                Assert.Equal("https://acme.example/ucp/mcp", serviceProfile.Endpoint);
+            });
+        Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.catalog"].Single().Version);
+        Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.checkout"].Single().Version);
         Assert.Equal(ModuleConstants.UcpVersion, profile.UcpVersion);
         Assert.Equal(ModuleConstants.Platform, profile.Platform);
         Assert.Contains(ModuleConstants.Capabilities.Catalog, profile.Capabilities);
@@ -72,6 +88,14 @@ public class UcpProfileServiceTests
         Assert.Contains(ModuleConstants.ErrorCodes.XApiExecutionFailed, profile.Errors.Codes);
         Assert.Contains(ModuleConstants.ErrorCodes.OrderNotFound, profile.Errors.Codes);
         Assert.DoesNotContain(profile.Endpoints.Operations, x => x.Path?.Contains("api_key") == true);
+
+        var json = JObject.Parse(JsonConvert.SerializeObject(new UcpDiscoveryDocument { Ucp = profile.Ucp }));
+        Assert.Single(json.Properties());
+        Assert.Equal(ModuleConstants.DiscoveryVersion, json["ucp"]?["version"]?.Value<string>());
+        Assert.Null(json["ucp_version"]);
+        Assert.Equal(JTokenType.Object, json["ucp"]?["services"]?.Type);
+        Assert.Equal(JTokenType.Object, json["ucp"]?["capabilities"]?.Type);
+        Assert.Equal(JTokenType.Object, json["ucp"]?["payment_handlers"]?.Type);
     }
 
     [Fact]

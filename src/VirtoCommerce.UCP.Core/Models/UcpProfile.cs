@@ -5,6 +5,9 @@ namespace VirtoCommerce.UCP.Core.Models;
 
 public class UcpProfile
 {
+    [JsonProperty("ucp")]
+    public UcpDiscoveryProfile Ucp { get; set; }
+
     [JsonProperty("ucp_version")]
     public string UcpVersion { get; set; }
 

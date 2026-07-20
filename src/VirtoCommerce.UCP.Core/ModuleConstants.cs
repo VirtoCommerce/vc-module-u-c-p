@@ -6,6 +6,7 @@ namespace VirtoCommerce.UCP.Core;
 public static class ModuleConstants
 {
     public const string UcpVersion = "1.0";
+    public const string DiscoveryVersion = "2026-04-08";
     public const string Source = "UCP";
     public const string Platform = "VirtoCommerce";
     public const string McpInstructions = """
@@ -49,6 +50,11 @@ public static class ModuleConstants
         public const string Checkout = "checkout";
         public const string Order = "order";
         public const string Geography = "geography";
+    }
+
+    public static class Discovery
+    {
+        public const string Service = "com.virtocommerce.ucp";
     }
 
     public static class Headers
