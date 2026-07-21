@@ -36,16 +36,28 @@ public class UcpProfileServiceTests
         Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Version);
         Assert.Equal("success", profile.Ucp.Status);
         Assert.Empty(profile.Ucp.PaymentHandlers);
+        Assert.False(profile.Ucp.Services.ContainsKey(ModuleConstants.Discovery.Service));
         Assert.Collection(
-            profile.Ucp.Services[ModuleConstants.Discovery.Service],
+            profile.Ucp.Services[ModuleConstants.Discovery.ShoppingService],
+            serviceProfile =>
+            {
+                Assert.Equal(ModuleConstants.DiscoveryVersion, serviceProfile.Version);
+                Assert.Equal("rest", serviceProfile.Transport);
+                Assert.Equal("https://acme.example/ucp/shopping", serviceProfile.Endpoint);
+            },
             serviceProfile =>
             {
                 Assert.Equal(ModuleConstants.DiscoveryVersion, serviceProfile.Version);
                 Assert.Equal("mcp", serviceProfile.Transport);
                 Assert.Equal("https://acme.example/ucp/mcp", serviceProfile.Endpoint);
             });
-        Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.catalog"].Single().Version);
-        Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.checkout"].Single().Version);
+        Assert.All(
+            ModuleConstants.Discovery.ShoppingCapabilities,
+            capability =>
+            {
+                Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities[capability].Single().Version);
+                Assert.StartsWith($"https://ucp.dev/{ModuleConstants.DiscoveryVersion}/schemas/shopping/", profile.Ucp.Capabilities[capability].Single().Schema);
+            });
         Assert.Equal(ModuleConstants.UcpVersion, profile.UcpVersion);
         Assert.Equal(ModuleConstants.Platform, profile.Platform);
         Assert.Contains(ModuleConstants.Capabilities.Catalog, profile.Capabilities);
@@ -55,9 +67,12 @@ public class UcpProfileServiceTests
         Assert.Contains(ModuleConstants.Capabilities.Geography, profile.Capabilities);
         Assert.Contains(profile.PaymentHandlers, x => x.Code == ModuleConstants.PaymentHandlers.HostedCheckout && x.Available);
         Assert.Contains(profile.PaymentHandlers, x => x.Code == ModuleConstants.PaymentHandlers.GooglePay && x.Reason == "not_available");
-        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.SearchProducts);
+        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.SearchCatalog);
+        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.LookupCatalog);
+        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.GetCheckout);
         Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.UpdateCheckout);
-        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.ResolveCountry);
+        Assert.Contains(profile.McpTools, x => x == ModuleConstants.McpTools.CancelCheckout);
+        Assert.DoesNotContain(profile.McpTools, x => x == ModuleConstants.McpTools.TrackOrder);
         Assert.Null(profile.DefaultStoreId);
         Assert.Contains(profile.AgentGuidance, x => x.Contains("shipping_address is required before hosted handoff", System.StringComparison.Ordinal));
         Assert.Contains(profile.AgentGuidance, x => x.Contains("update_checkout followed by a new handoff_checkout URL", System.StringComparison.Ordinal));

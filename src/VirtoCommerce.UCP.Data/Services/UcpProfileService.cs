@@ -42,22 +42,17 @@ public class UcpProfileService : IUcpProfileService
 
     private static readonly string[] SupportedMcpTools =
     [
-        ModuleConstants.McpTools.GetStoreCapabilities,
-        ModuleConstants.McpTools.SearchProducts,
+        ModuleConstants.McpTools.SearchCatalog,
+        ModuleConstants.McpTools.LookupCatalog,
         ModuleConstants.McpTools.GetProduct,
         ModuleConstants.McpTools.CreateCart,
-        ModuleConstants.McpTools.ListCarts,
         ModuleConstants.McpTools.GetCart,
         ModuleConstants.McpTools.UpdateCart,
+        ModuleConstants.McpTools.CancelCart,
         ModuleConstants.McpTools.CreateCheckout,
+        ModuleConstants.McpTools.GetCheckout,
         ModuleConstants.McpTools.UpdateCheckout,
-        ModuleConstants.McpTools.CheckoutAndHandoff,
-        ModuleConstants.McpTools.GetPaymentHandlers,
-        ModuleConstants.McpTools.HandoffCheckout,
-        ModuleConstants.McpTools.TrackOrder,
-        ModuleConstants.McpTools.ListCountries,
-        ModuleConstants.McpTools.ResolveCountry,
-        ModuleConstants.McpTools.ListRegions,
+        ModuleConstants.McpTools.CancelCheckout,
     ];
 
     private static readonly string[] CheckoutGuidance =
@@ -230,15 +225,17 @@ public class UcpProfileService : IUcpProfileService
             Status = "success",
         };
 
-        AddDiscoveryService(result, "mcp", BuildMcpUrl(request));
+        AddDiscoveryService(result, ModuleConstants.Discovery.ShoppingService, "rest", BuildShoppingUrl(request));
+        AddDiscoveryService(result, ModuleConstants.Discovery.ShoppingService, "mcp", BuildMcpUrl(request));
 
-        foreach (var capability in SupportedCapabilities)
+        foreach (var capability in ModuleConstants.Discovery.ShoppingCapabilities)
         {
-            result.Capabilities[$"{ModuleConstants.Discovery.Service}.{capability}"] =
+            result.Capabilities[capability] =
             [
                 new UcpCapabilityVersion
                 {
                     Version = ModuleConstants.DiscoveryVersion,
+                    Schema = GetShoppingCapabilitySchema(capability),
                 },
             ];
         }
@@ -246,17 +243,31 @@ public class UcpProfileService : IUcpProfileService
         return result;
     }
 
-    protected virtual void AddDiscoveryService(UcpDiscoveryProfile profile, string transport, string endpoint)
+    protected virtual string GetShoppingCapabilitySchema(string capability)
+    {
+        var schemaName = capability switch
+        {
+            ModuleConstants.Discovery.CatalogSearchCapability => "catalog_search.json",
+            ModuleConstants.Discovery.CatalogLookupCapability => "catalog_lookup.json",
+            ModuleConstants.Discovery.CartCapability => "cart.json",
+            ModuleConstants.Discovery.CheckoutCapability => "checkout.json",
+            _ => throw new ArgumentOutOfRangeException(nameof(capability), capability, "Unknown UCP shopping capability."),
+        };
+
+        return $"https://ucp.dev/{ModuleConstants.DiscoveryVersion}/schemas/shopping/{schemaName}";
+    }
+
+    protected virtual void AddDiscoveryService(UcpDiscoveryProfile profile, string serviceName, string transport, string endpoint)
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out _))
         {
             return;
         }
 
-        if (!profile.Services.TryGetValue(ModuleConstants.Discovery.Service, out var services))
+        if (!profile.Services.TryGetValue(serviceName, out var services))
         {
             services = new List<UcpDiscoveryServiceProfile>();
-            profile.Services[ModuleConstants.Discovery.Service] = services;
+            profile.Services[serviceName] = services;
         }
 
         services.Add(new UcpDiscoveryServiceProfile
@@ -449,6 +460,19 @@ public class UcpProfileService : IUcpProfileService
         return string.IsNullOrWhiteSpace(origin)
             ? null
             : $"{origin}{ModuleConstants.Endpoints.Mcp}";
+    }
+
+    protected virtual string BuildShoppingUrl(HttpRequest request)
+    {
+        var origin = GetRequestOrigin(request);
+        if (string.IsNullOrWhiteSpace(origin) && Uri.TryCreate(_options.UcpBaseUrl, UriKind.Absolute, out var ucpBaseUri))
+        {
+            origin = ucpBaseUri.GetLeftPart(UriPartial.Authority);
+        }
+
+        return string.IsNullOrWhiteSpace(origin)
+            ? null
+            : $"{origin}{ModuleConstants.Endpoints.Shopping}";
     }
 
     protected virtual string GetHandoffTemplate(string origin)

@@ -57,6 +57,7 @@ public class Module : IModule, IHasConfiguration
         serviceCollection.AddTransient<IUcpCartService, UcpCartService>();
         serviceCollection.AddTransient<IUcpCheckoutService, UcpCheckoutService>();
         serviceCollection.AddTransient<IUcpOrderService, UcpOrderService>();
+        serviceCollection.AddTransient<IUcpShoppingService, UcpShoppingService>();
         serviceCollection.AddTransient<IUcpGeographyService, UcpGeographyService>();
         serviceCollection.AddTransient<IXApiInProcessExecutor, XApiInProcessExecutor>();
 

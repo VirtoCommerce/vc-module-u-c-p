@@ -15,7 +15,6 @@ using VirtoCommerce.UCP.Web.Mcp.Models;
 
 namespace VirtoCommerce.UCP.Web.Mcp;
 
-[McpServerToolType]
 public static class UcpMcpCommerceTools
 {
     [McpServerTool(Name = ModuleConstants.McpTools.GetStoreCapabilities, ReadOnly = true, Destructive = false)]
@@ -74,7 +73,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.GetProduct, ReadOnly = true, Destructive = false)]
+    [McpServerTool(Name = "legacy_get_product", ReadOnly = true, Destructive = false)]
     [Description("Get one product in this Virto Commerce storefront.")]
     public static Task<object> GetProduct(
         IUcpProfileService profileService,
@@ -112,7 +111,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.CreateCart, ReadOnly = false, Destructive = false)]
+    [McpServerTool(Name = "legacy_create_cart", ReadOnly = false, Destructive = false)]
     [Description("Create a cart in this Virto Commerce storefront.")]
     public static Task<object> CreateCart(
         IUcpProfileService profileService,
@@ -185,7 +184,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.GetCart, ReadOnly = true, Destructive = false)]
+    [McpServerTool(Name = "legacy_get_cart", ReadOnly = true, Destructive = false)]
     [Description("Get cart in this Virto Commerce storefront.")]
     public static Task<object> GetCart(
         IUcpProfileService profileService,
@@ -214,7 +213,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.UpdateCart, ReadOnly = false, Destructive = false)]
+    [McpServerTool(Name = "legacy_update_cart", ReadOnly = false, Destructive = false)]
     [Description("Update cart state in this Virto Commerce storefront.")]
     public static Task<object> UpdateCart(
         IUcpProfileService profileService,
@@ -251,7 +250,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.CreateCheckout, ReadOnly = false, Destructive = false)]
+    [McpServerTool(Name = "legacy_create_checkout", ReadOnly = false, Destructive = false)]
     [Description("Create checkout in this Virto Commerce storefront. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
     public static Task<object> CreateCheckout(
         IUcpProfileService profileService,
@@ -297,7 +296,7 @@ public static class UcpMcpCommerceTools
         });
     }
 
-    [McpServerTool(Name = ModuleConstants.McpTools.UpdateCheckout, ReadOnly = false, Destructive = false)]
+    [McpServerTool(Name = "legacy_update_checkout", ReadOnly = false, Destructive = false)]
     [Description("Update checkout address or buyer data in this Virto Commerce storefront.")]
     public static Task<object> UpdateCheckout(
         IUcpProfileService profileService,

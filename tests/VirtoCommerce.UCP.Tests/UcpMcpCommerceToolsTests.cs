@@ -26,23 +26,77 @@ public class UcpMcpCommerceToolsTests
     {
         var toolNames = GetCommerceToolNames();
 
-        Assert.Contains(ModuleConstants.McpTools.GetStoreCapabilities, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.SearchProducts, toolNames);
+        Assert.Contains(ModuleConstants.McpTools.SearchCatalog, toolNames);
+        Assert.Contains(ModuleConstants.McpTools.LookupCatalog, toolNames);
         Assert.Contains(ModuleConstants.McpTools.GetProduct, toolNames);
         Assert.Contains(ModuleConstants.McpTools.CreateCart, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.ListCarts, toolNames);
         Assert.Contains(ModuleConstants.McpTools.GetCart, toolNames);
         Assert.Contains(ModuleConstants.McpTools.UpdateCart, toolNames);
+        Assert.Contains(ModuleConstants.McpTools.CancelCart, toolNames);
         Assert.Contains(ModuleConstants.McpTools.CreateCheckout, toolNames);
+        Assert.Contains(ModuleConstants.McpTools.GetCheckout, toolNames);
         Assert.Contains(ModuleConstants.McpTools.UpdateCheckout, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.CheckoutAndHandoff, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.GetPaymentHandlers, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.HandoffCheckout, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.ListCountries, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.ResolveCountry, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.ListRegions, toolNames);
-        Assert.Contains(ModuleConstants.McpTools.TrackOrder, toolNames);
-        Assert.DoesNotContain("get_ucp_autodiscovery", toolNames);
+        Assert.Contains(ModuleConstants.McpTools.CancelCheckout, toolNames);
+        Assert.Equal(11, toolNames.Length);
+        Assert.DoesNotContain(ModuleConstants.McpTools.TrackOrder, toolNames);
+        Assert.DoesNotContain(ModuleConstants.McpTools.HandoffCheckout, toolNames);
+    }
+
+    [Fact]
+    public void OfficialShoppingTools_UseUcpMcpParameterShape()
+    {
+        var expected = new Dictionary<string, string[]>
+        {
+            [nameof(UcpMcpShoppingTools.SearchCatalog)] = ["meta", "catalog"],
+            [nameof(UcpMcpShoppingTools.LookupCatalog)] = ["meta", "catalog"],
+            [nameof(UcpMcpShoppingTools.GetProduct)] = ["meta", "catalog"],
+            [nameof(UcpMcpShoppingTools.CreateCart)] = ["meta", "cart"],
+            [nameof(UcpMcpShoppingTools.GetCart)] = ["meta", "id"],
+            [nameof(UcpMcpShoppingTools.UpdateCart)] = ["meta", "id", "cart"],
+            [nameof(UcpMcpShoppingTools.CancelCart)] = ["meta", "id"],
+            [nameof(UcpMcpShoppingTools.CreateCheckout)] = ["meta", "checkout"],
+            [nameof(UcpMcpShoppingTools.GetCheckout)] = ["meta", "id"],
+            [nameof(UcpMcpShoppingTools.UpdateCheckout)] = ["meta", "id", "checkout"],
+            [nameof(UcpMcpShoppingTools.CancelCheckout)] = ["meta", "id"],
+        };
+
+        foreach (var (methodName, expectedParameters) in expected)
+        {
+            var parameters = typeof(UcpMcpShoppingTools)
+                .GetMethod(methodName)
+                ?.GetParameters()
+                .Where(parameter => parameter.ParameterType != typeof(IUcpShoppingService) && parameter.ParameterType != typeof(CancellationToken))
+                .Select(parameter => parameter.Name)
+                .ToArray();
+
+            Assert.Equal(expectedParameters, parameters);
+        }
+
+        Assert.DoesNotContain("complete_checkout", GetCommerceToolNames());
+        Assert.DoesNotContain("get_order", GetCommerceToolNames());
+    }
+
+    [Fact]
+    public void OfficialShoppingToolSchema_RequiresMetaAndDomainObject()
+    {
+        using var services = new ServiceCollection()
+            .AddSingleton<IUcpShoppingService>(_ => null)
+            .BuildServiceProvider();
+        var tool = McpServerTool.Create(
+            typeof(UcpMcpShoppingTools).GetMethod(nameof(UcpMcpShoppingTools.CreateCheckout)),
+            target: null,
+            new McpServerToolCreateOptions
+            {
+                Services = services,
+                SerializerOptions = CreateMcpToolSerializerOptions(),
+            });
+        var schema = tool.ProtocolTool.InputSchema;
+        var properties = schema.GetProperty("properties");
+        var required = schema.GetProperty("required").EnumerateArray().Select(x => x.GetString()).ToArray();
+
+        Assert.True(properties.TryGetProperty("meta", out _));
+        Assert.True(properties.TryGetProperty("checkout", out _));
+        Assert.Equal(["meta", "checkout"], required);
     }
 
     [Fact]
@@ -216,21 +270,15 @@ public class UcpMcpCommerceToolsTests
     [Fact]
     public void McpInstructions_DescribeInstalledStorefrontMode()
     {
-        Assert.Contains("where this MCP server is installed", ModuleConstants.McpInstructions);
-        Assert.Contains("Do not pass storefront URLs", ModuleConstants.McpInstructions);
-        Assert.Contains(ModuleConstants.McpTools.CheckoutAndHandoff, ModuleConstants.McpInstructions);
-        Assert.Contains("shipping_address.postal_code", ModuleConstants.McpInstructions);
-        Assert.Contains("complete desired line_items state", ModuleConstants.McpInstructions);
-        Assert.Contains("never call create_cart as a fallback", ModuleConstants.McpInstructions);
-        Assert.Contains("saved cart_id and buyer_id", ModuleConstants.McpInstructions);
-        Assert.Contains("list_carts requires an explicit buyer_id", ModuleConstants.McpInstructions);
-        Assert.Contains("buyer scope, not Platform authentication", ModuleConstants.McpInstructions);
-        Assert.Contains("MCP tool calls are stateless", ModuleConstants.McpInstructions);
-        Assert.Contains("build a fresh argument object", ModuleConstants.McpInstructions);
-        Assert.Contains("every new line item requires product_id and quantity greater than zero", ModuleConstants.McpInstructions);
-        Assert.Contains("explicitly repeat cart_id, store_id, and buyer_id", ModuleConstants.McpInstructions);
-        Assert.Contains("Never send a partial shipping_address", ModuleConstants.McpInstructions);
-        Assert.Contains("at least one of order_id, order_number, or the saved cart_id", ModuleConstants.McpInstructions);
+        Assert.Contains("implements dev.ucp.shopping", ModuleConstants.McpInstructions);
+        Assert.Contains(ModuleConstants.McpTools.SearchCatalog, ModuleConstants.McpInstructions);
+        Assert.Contains(ModuleConstants.McpTools.CreateCheckout, ModuleConstants.McpInstructions);
+        Assert.Contains("meta.ucp-agent.profile", ModuleConstants.McpInstructions);
+        Assert.Contains("meta.idempotency-key", ModuleConstants.McpInstructions);
+        Assert.Contains("street_address", ModuleConstants.McpInstructions);
+        Assert.Contains("requires_escalation", ModuleConstants.McpInstructions);
+        Assert.Contains("continue_url", ModuleConstants.McpInstructions);
+        Assert.Contains("does not expose complete_checkout or get_order", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("McpDefaultStorefrontUrl", ModuleConstants.McpInstructions);
         Assert.DoesNotContain("get_ucp_autodiscovery", ModuleConstants.McpInstructions);
     }
@@ -343,7 +391,7 @@ public class UcpMcpCommerceToolsTests
 
     private static string[] GetCommerceToolNames()
     {
-        return typeof(UcpMcpCommerceTools)
+        return typeof(UcpMcpShoppingTools)
             .GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Select(method => method.GetCustomAttribute<McpServerToolAttribute>())
             .Where(attribute => attribute != null)
