@@ -36,14 +36,10 @@ public class UcpProfileServiceTests
         Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Version);
         Assert.Equal("success", profile.Ucp.Status);
         Assert.Empty(profile.Ucp.PaymentHandlers);
-        Assert.Collection(
-            profile.Ucp.Services[ModuleConstants.Discovery.Service],
-            serviceProfile =>
-            {
-                Assert.Equal(ModuleConstants.DiscoveryVersion, serviceProfile.Version);
-                Assert.Equal("mcp", serviceProfile.Transport);
-                Assert.Equal("https://acme.example/ucp/mcp", serviceProfile.Endpoint);
-            });
+        var serviceProfile = Assert.Single(profile.Ucp.Services[ModuleConstants.Discovery.Service]);
+        Assert.Equal(ModuleConstants.DiscoveryVersion, serviceProfile.Version);
+        Assert.Equal("mcp", serviceProfile.Transport);
+        Assert.Equal("https://acme.example/ucp/mcp", serviceProfile.Endpoint);
         Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.catalog"].Single().Version);
         Assert.Equal(ModuleConstants.DiscoveryVersion, profile.Ucp.Capabilities["com.virtocommerce.ucp.checkout"].Single().Version);
         Assert.Equal(ModuleConstants.UcpVersion, profile.UcpVersion);
