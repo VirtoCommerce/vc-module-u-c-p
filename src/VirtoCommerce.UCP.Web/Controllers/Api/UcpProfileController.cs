@@ -19,10 +19,13 @@ public class UcpProfileController : ControllerBase
 
     [HttpGet]
     [Route("/.well-known/ucp")]
-    [ProducesResponseType(typeof(UcpProfile), StatusCodes.Status200OK)]
-    public async Task<ActionResult<UcpProfile>> GetProfile(CancellationToken cancellationToken)
+    [ProducesResponseType(typeof(UcpDiscoveryDocument), StatusCodes.Status200OK)]
+    public async Task<ActionResult<UcpDiscoveryDocument>> GetProfile(CancellationToken cancellationToken)
     {
         var profile = await _ucpProfileService.GetProfile(cancellationToken);
-        return Ok(profile);
+        return Ok(new UcpDiscoveryDocument
+        {
+            Ucp = profile.Ucp,
+        });
     }
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -151,6 +152,7 @@ public class UcpProfileService : IUcpProfileService
 
         var result = new UcpProfile
         {
+            Ucp = CreateDiscoveryProfile(request),
             UcpVersion = ModuleConstants.UcpVersion,
             Platform = ModuleConstants.Platform,
             StorefrontOrigin = origin,
@@ -218,6 +220,51 @@ public class UcpProfileService : IUcpProfileService
         }
 
         return result;
+    }
+
+    protected virtual UcpDiscoveryProfile CreateDiscoveryProfile(HttpRequest request)
+    {
+        var result = new UcpDiscoveryProfile
+        {
+            Version = ModuleConstants.DiscoveryVersion,
+            Status = "success",
+        };
+
+        AddDiscoveryService(result, "mcp", BuildMcpUrl(request));
+
+        foreach (var capability in SupportedCapabilities)
+        {
+            result.Capabilities[$"{ModuleConstants.Discovery.Service}.{capability}"] =
+            [
+                new UcpCapabilityVersion
+                {
+                    Version = ModuleConstants.DiscoveryVersion,
+                },
+            ];
+        }
+
+        return result;
+    }
+
+    protected virtual void AddDiscoveryService(UcpDiscoveryProfile profile, string transport, string endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out _))
+        {
+            return;
+        }
+
+        if (!profile.Services.TryGetValue(ModuleConstants.Discovery.Service, out var services))
+        {
+            services = new List<UcpDiscoveryServiceProfile>();
+            profile.Services[ModuleConstants.Discovery.Service] = services;
+        }
+
+        services.Add(new UcpDiscoveryServiceProfile
+        {
+            Version = ModuleConstants.DiscoveryVersion,
+            Transport = transport,
+            Endpoint = endpoint,
+        });
     }
 
     protected virtual void AddEndpointOperations(UcpEndpointProfile endpoints)
@@ -389,6 +436,19 @@ public class UcpProfileService : IUcpProfileService
         return request == null
             ? "/ucp/v1"
             : $"{request.Scheme}://{request.Host}/ucp/v1".TrimEnd('/');
+    }
+
+    protected virtual string BuildMcpUrl(HttpRequest request)
+    {
+        var origin = GetRequestOrigin(request);
+        if (string.IsNullOrWhiteSpace(origin) && Uri.TryCreate(_options.UcpBaseUrl, UriKind.Absolute, out var ucpBaseUri))
+        {
+            origin = ucpBaseUri.GetLeftPart(UriPartial.Authority);
+        }
+
+        return string.IsNullOrWhiteSpace(origin)
+            ? null
+            : $"{origin}{ModuleConstants.Endpoints.Mcp}";
     }
 
     protected virtual string GetHandoffTemplate(string origin)
