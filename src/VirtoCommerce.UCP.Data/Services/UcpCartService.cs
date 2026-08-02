@@ -6,12 +6,13 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Models;
-using VirtoCommerce.Platform.Core.Common;
 
 namespace VirtoCommerce.UCP.Data.Services;
 
@@ -715,7 +716,10 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             return null;
         }
 
-        var countries = await _countriesService.GetCountriesAsync();
+        var countries = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountries",
+            _countriesService.GetCountriesAsync);
         cancellationToken.ThrowIfCancellationRequested();
 
         return countries.FirstOrDefault(country => string.Equals(country.Name, countryName, StringComparison.OrdinalIgnoreCase));
@@ -728,7 +732,10 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
             return;
         }
 
-        var regions = await _countriesService.GetCountryRegionsAsync(countryId);
+        var regions = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountryRegions",
+            () => _countriesService.GetCountryRegionsAsync(countryId));
         cancellationToken.ThrowIfCancellationRequested();
 
         var region = regions.FirstOrDefault(x => string.Equals(x.Id, address.RegionId, StringComparison.OrdinalIgnoreCase))

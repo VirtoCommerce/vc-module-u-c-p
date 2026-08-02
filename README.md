@@ -143,7 +143,10 @@ Configuration is read from the `UCP` section:
     "StorefrontOrigin": "https://store.example.com",
     "HandoffUrlTemplate": "https://store.example.com/checkout?ucp_session={token}",
     "HandoffTokenTtlMinutes": 15,
-    "AnonymousCatalog": true
+    "AnonymousCatalog": true,
+    "Observability": {
+      "InputCaptureMode": "Always"
+    }
   }
 }
 ```
@@ -158,6 +161,7 @@ Configuration is read from the `UCP` section:
 | `UCP:HandoffUrlTemplate` | String | — | Explicit override for the hosted checkout handoff URL. `{token}` is replaced with the `ucp_session` token. |
 | `UCP:HandoffTokenTtlMinutes` | Integer | `15` | Absolute expiration of temporary checkout handoff sessions in the distributed cache. |
 | `UCP:AnonymousCatalog` | Boolean | `true` | Allows anonymous catalog search and product detail requests. |
+| `UCP:Observability:InputCaptureMode` | Enum | `Always` | Controls the bounded allowlisted operation input in the terminal log: `None`, `ErrorsOnly`, or `Always`. Trace tags and counters remain enabled in every mode. |
 
 If `DefaultStoreId` is not configured, discovery reads open stores from the Store module. If one store is found, `/.well-known/ucp` returns it as `default_store_id`, `store`, and the only `stores[]` item. If multiple stores are found, discovery returns them in `stores[]` and the client must choose a store explicitly.
 
@@ -244,7 +248,7 @@ The module manifest declares these runtime dependencies:
 
 | Module | Version |
 | --- | --- |
-| `VirtoCommerce.Xapi` | `3.1001.0` |
+| `VirtoCommerce.Xapi` | `3.1015.0` |
 | `VirtoCommerce.XCatalog` | `3.1000.0` |
 | `VirtoCommerce.XCart` | `3.1016.0` |
 | `VirtoCommerce.Store` | `3.1004.0` |
@@ -252,6 +256,8 @@ The module manifest declares these runtime dependencies:
 | `VirtoCommerce.Marketing` | `3.1000.0` |
 
 Target framework: `.NET 10`.
+
+Minimum Virto Commerce Platform version: `3.1039.0`. Platform `3.1038.0` contains the Microsoft.OpenApi security upgrade, but the required `VirtoCommerce.Xapi 3.1015.0` itself requires Platform `3.1039.0`.
 
 ## Web API
 
@@ -471,9 +477,60 @@ Known UCP error codes:
 - `product_not_found`
 - `cart_not_found`
 - `order_not_found`
-- `xapi_execution_failed`
+- `xapi_invalid_response`
 
-Responses include correlation id when available. The module reads `X-Correlation-Id` and falls back to the ASP.NET Core trace identifier.
+Responses include correlation id when available. The module reads `X-Correlation-Id` and falls back to the ASP.NET Core trace identifier. UCP REST responses also include `X-Trace-Id` for direct correlation with distributed traces.
+
+GraphQL error responses produced by an in-process XAPI schema are not remapped to a synthetic UCP `502` error. REST returns the original GraphQL JSON envelope with GraphQL HTTP semantics. MCP returns `isError: true`, preserves the original envelope in `structuredContent`, and returns the same JSON in model-visible text content so an AI agent can inspect XAPI codes, paths, locations, extensions, and partial data.
+
+Every UCP MCP tool result also contains a model-visible `Trace ID: ...` text block and `_meta.trace_id`. This allows Claude, GPT, and operators to open the exact MCP → UCP → XAPI trace for both successful and failed calls.
+
+## Observability and Logging
+
+The module adds exporter-neutral `VirtoCommerce.UCP` activities to the Platform's existing OpenTelemetry pipeline:
+
+```text
+MCP/REST request
+└─ UCP <operation>
+   └─ XAPI <schema> <GraphQL operation>
+      └─ existing SQL, Elastic, HTTP, cache, and other dependency spans
+```
+
+Each actual in-process XAPI execution gets its own span. UCP does not configure an exporter, endpoint, sampler, service resource, Serilog sink, or minimum logging level; those remain controlled by Platform and the installed observability module.
+
+Each UCP operation writes one structured terminal log: `Information` for success/rejection/cancellation and `Error` for failures. The log contains outcome, duration, XAPI call/failed/canceled/GraphQL-error counts, factual XAPI mutation attempt/failed counts, and trace/span ids. It does not infer transaction commit state or retry safety.
+
+The terminal event has stable `EventId=2000`, `EventName=ucp.operation.completed`, and schema version `1`. Its `InputJson` is an operation-specific allowlist rather than a serialized request body. It retains values needed to reproduce a call (for example search text, requested/effective store, currency, culture, product/cart/order identifiers, line item identifiers and quantities) and reports truncation explicitly. UCP response bodies and output snapshots are not copied into telemetry; successful-result semantics are verified by reproducing the captured input under a debugger.
+
+The following values are never copied into these snapshots: authorization or API keys, raw handoff/session tokens, address text and postal codes, buyer identities or contact data, organization identities, cart names, notes, payment data, raw coupon values, GraphQL documents, complete variables, and complete results. Tokens/cursors use a bounded fingerprint where correlation is useful; private identity, address, and buyer data use field-presence flags plus safe country/region identifiers.
+
+Direct dependency spans record `vc.dependency.outcome`. Successful dependencies use `success`; handoff cache reads use the more specific `hit`, `miss`, `expired`, or `corrupt` outcomes without changing the client-facing invalid-session contract.
+
+`UCP:Observability:InputCaptureMode` supports:
+
+- `Always` (default): write the allowlisted input for successful and failed operations;
+- `ErrorsOnly`: write it only for `error`, `rejected`, or `degraded` outcomes;
+- `None`: omit `InputJson` while retaining normal trace attributes and counters.
+
+Production Platform configuration must allow `Information` for the `VirtoCommerce.UCP` category, otherwise successful/rejected/canceled terminal events are filtered before any exporter sees them:
+
+```json
+{
+  "Serilog": {
+    "MinimumLevel": {
+      "Override": {
+        "VirtoCommerce.UCP": "Information"
+      }
+    }
+  }
+}
+```
+
+Unhandled XAPI resolver exceptions are captured through GraphQL.NET's `UnhandledExceptionDelegate`. The original exception is attached to the active XAPI span as the standard OpenTelemetry `exception` event (`exception.type`, `exception.message`, `exception.stacktrace`) and emitted as one correlated structured error log (`EventId=2001`) with the same trace/span ids and a safe failing-call input summary. Expected GraphQL errors without a CLR exception contain bounded codes, paths, and messages but no invented stack trace. UCP never writes the complete GraphQL response envelope to its own logs.
+
+`VirtoCommerce.UCP` registers only its activity sources with the Platform tracer provider. It does not create another provider or configure an exporter, sampler, service name, or Azure SDK. With the Virto Commerce OpenTelemetry module, set `OpenTelemetry:Enabled`, `OpenTelemetry:Endpoint`, and the process-wide `OTEL_SERVICE_NAME`. In Azure Monitor, UCP/XAPI `ActivityKind.Internal` spans map to dependencies and their attributes become custom dimensions; the trace id correlates them with ASP.NET requests and structured logs.
+
+The MCP C# SDK 1.4 copies the complete `content` of an `isError: true` result into the `tools/call` activity status description independently of logging levels. For the 16 UCP tools, an incoming MCP message filter keeps the `Error` status but replaces that description with the bounded `UCP tool returned an error.` after the response has been produced. The client still receives the lossless XAPI envelope. Foreign MCP tools and successful calls are not changed.
 
 ## Build and Test
 

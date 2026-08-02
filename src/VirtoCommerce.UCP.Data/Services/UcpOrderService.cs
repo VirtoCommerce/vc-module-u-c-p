@@ -5,14 +5,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using VirtoCommerce.OrdersModule.Core.Model;
+using VirtoCommerce.OrdersModule.Core.Model.Search;
+using VirtoCommerce.OrdersModule.Core.Services;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Models;
-using VirtoCommerce.OrdersModule.Core.Model;
-using VirtoCommerce.OrdersModule.Core.Model.Search;
-using VirtoCommerce.OrdersModule.Core.Services;
 
 namespace VirtoCommerce.UCP.Data.Services;
 
@@ -95,7 +96,10 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
 
         if (!string.IsNullOrWhiteSpace(request.OrderId))
         {
-            var orders = await _customerOrderService.GetAsync([request.OrderId], OrderResponseGroup, clone: false);
+            var orders = await UcpDiagnostics.ExecuteDependency(
+                "orders",
+                "GetOrdersById",
+                () => _customerOrderService.GetAsync([request.OrderId], OrderResponseGroup, clone: false));
             var order = orders.FirstOrDefault();
             if (IsOrderInScope(order, request))
             {
@@ -109,14 +113,17 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
             return null;
         }
 
-        var result = await _customerOrderSearchService.SearchAsync(new CustomerOrderSearchCriteria
-        {
-            CustomerId = request.UserId,
-            OrganizationId = request.OrganizationId,
-            Number = number,
-            Take = 1,
-            ResponseGroup = OrderResponseGroup,
-        }, clone: false);
+        var result = await UcpDiagnostics.ExecuteDependency(
+            "orders",
+            "SearchOrdersByNumber",
+            () => _customerOrderSearchService.SearchAsync(new CustomerOrderSearchCriteria
+            {
+                CustomerId = request.UserId,
+                OrganizationId = request.OrganizationId,
+                Number = number,
+                Take = 1,
+                ResponseGroup = OrderResponseGroup,
+            }, clone: false));
 
         return result.Results.FirstOrDefault();
     }
@@ -132,7 +139,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
             ResponseGroup = OrderResponseGroup,
         };
 
-        var order = await FindOrderByCartId(criteria, request.CartId);
+        var order = await FindOrderByCartId(criteria, request.CartId, "SearchOrdersByCartScoped");
         if (order != null || string.IsNullOrWhiteSpace(request.UserId) && string.IsNullOrWhiteSpace(request.OrganizationId))
         {
             return order;
@@ -141,12 +148,15 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         criteria.CustomerId = null;
         criteria.OrganizationId = null;
 
-        return await FindOrderByCartId(criteria, request.CartId);
+        return await FindOrderByCartId(criteria, request.CartId, "SearchOrdersByCartFallback");
     }
 
-    private async Task<CustomerOrder> FindOrderByCartId(CustomerOrderSearchCriteria criteria, string cartId)
+    private async Task<CustomerOrder> FindOrderByCartId(CustomerOrderSearchCriteria criteria, string cartId, string operation)
     {
-        var result = await _customerOrderSearchService.SearchAsync(criteria, clone: false);
+        var result = await UcpDiagnostics.ExecuteDependency(
+            "orders",
+            operation,
+            () => _customerOrderSearchService.SearchAsync(criteria, clone: false));
         return result.Results.FirstOrDefault(order => string.Equals(order.ShoppingCartId, cartId, StringComparison.OrdinalIgnoreCase));
     }
 
@@ -193,20 +203,20 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
                 var lineTotal = item.ExtendedPrice != 0 ? item.ExtendedPrice : placedPrice * item.Quantity;
 
                 return new UcpOrderLineItem
-            {
-                Id = item.Id,
-                ProductId = item.ProductId,
-                Sku = item.Sku,
-                Name = item.Name,
-                Status = item.Status,
-                ImageUrl = item.ImageUrl,
-                Quantity = item.Quantity,
-                UnitPrice = CreateMoney(item.Price, itemCurrency),
-                PlacedPrice = CreateMoney(placedPrice, itemCurrency),
-                LineTotal = CreateMoney(lineTotal, itemCurrency),
-                DiscountTotal = CreateMoney(item.DiscountTotal, itemCurrency),
-                TaxTotal = CreateMoney(item.TaxTotal, itemCurrency),
-            };
+                {
+                    Id = item.Id,
+                    ProductId = item.ProductId,
+                    Sku = item.Sku,
+                    Name = item.Name,
+                    Status = item.Status,
+                    ImageUrl = item.ImageUrl,
+                    Quantity = item.Quantity,
+                    UnitPrice = CreateMoney(item.Price, itemCurrency),
+                    PlacedPrice = CreateMoney(placedPrice, itemCurrency),
+                    LineTotal = CreateMoney(lineTotal, itemCurrency),
+                    DiscountTotal = CreateMoney(item.DiscountTotal, itemCurrency),
+                    TaxTotal = CreateMoney(item.TaxTotal, itemCurrency),
+                };
             })
             .ToList();
     }

@@ -1,11 +1,17 @@
+using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using System.Text;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
@@ -62,6 +68,62 @@ public class UcpCheckoutServiceTests
         Assert.Equal("cart-1", restore.Checkout.CartId);
         Assert.Equal("buyer@example.com", restore.Checkout.Buyer.Email);
         Assert.Equal("buyer-1", restore.Checkout.Buyer.Id);
+    }
+
+    [Fact]
+    public async Task RestoreHandoff_DoesNotMaskCacheProviderJsonExceptionAsInvalidSession()
+    {
+        var expected = new JsonException("cache provider failure");
+        var service = CreateService(
+            new StubCartService(CreateCart()),
+            new StubDistributedCache(expected));
+
+        var actual = await Assert.ThrowsAsync<JsonException>(() => service.RestoreHandoff(
+            new UcpHandoffRestoreRequest { UcpSession = "valid-shape-token" },
+            TestContext.Current.CancellationToken));
+
+        Assert.Same(expected, actual);
+    }
+
+    [Theory]
+    [InlineData(null, "miss", true)]
+    [InlineData("{not-json", "corrupt", true)]
+    [InlineData("{\"checkout_id\":\"checkout-1\",\"cart_id\":\"cart-1\",\"store_id\":\"store-acme\",\"currency\":\"USD\",\"culture_name\":\"en-US\",\"expires_at\":\"2000-01-01T00:00:00+00:00\"}", "expired", true)]
+    [InlineData("{\"checkout_id\":\"checkout-1\",\"cart_id\":\"cart-1\",\"store_id\":\"store-acme\",\"currency\":\"USD\",\"culture_name\":\"en-US\",\"expires_at\":\"2099-01-01T00:00:00+00:00\"}", "hit", false)]
+    public async Task RestoreHandoff_RecordsCacheReadOutcome(string payloadJson, string expectedOutcome, bool expectFailure)
+    {
+        const string parentSourceName = "VCST5544.Tests.CacheOutcome";
+        const string token = "cache-outcome-token";
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = CreateActivityListener(parentSourceName, stopped);
+        using var parentSource = new ActivitySource(parentSourceName);
+        using var parent = parentSource.StartActivity("POST ucp/v1/internal/handoff/restore", ActivityKind.Server);
+        Assert.NotNull(parent);
+
+        var cache = new StubDistributedCache();
+        if (payloadJson != null)
+        {
+            cache.SetRaw($"UCP:Handoff:{token}", payloadJson);
+        }
+        var service = CreateService(new StubCartService(CreateCart()), cache);
+
+        var restore = () => service.RestoreHandoff(
+            new UcpHandoffRestoreRequest { UcpSession = token },
+            TestContext.Current.CancellationToken);
+        if (expectFailure)
+        {
+            await Assert.ThrowsAsync<UcpException>(restore);
+        }
+        else
+        {
+            var response = await restore();
+            Assert.Equal("cart-1", response.Checkout.CartId);
+        }
+
+        var dependency = Assert.Single(stopped, activity =>
+            activity.DisplayName == "VC distributed-cache GetHandoffSession" &&
+            activity.TraceId == parent.TraceId);
+        Assert.Equal(expectedOutcome, dependency.GetTagItem("vc.dependency.outcome"));
     }
 
     [Fact]
@@ -305,7 +367,7 @@ public class UcpCheckoutServiceTests
         Assert.Contains("shipping_address.first_name", exception.Message);
     }
 
-    private static UcpCheckoutService CreateService(IUcpCartService cartService)
+    private static UcpCheckoutService CreateService(IUcpCartService cartService, IDistributedCache distributedCache = null)
     {
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -315,7 +377,7 @@ public class UcpCheckoutServiceTests
 
         return new UcpCheckoutService(
             cartService,
-            new StubDistributedCache(),
+            distributedCache ?? new StubDistributedCache(),
             httpContextAccessor,
             Options.Create(new UcpOptions
             {
@@ -325,6 +387,19 @@ public class UcpCheckoutServiceTests
                 StorefrontOrigin = "https://storefront.example",
                 HandoffUrlTemplate = "https://storefront.example/checkout?ucp_session={token}",
             }));
+    }
+
+    private static ActivityListener CreateActivityListener(string parentSourceName, ConcurrentQueue<Activity> stopped)
+    {
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == UcpDiagnostics.ActivitySourceName || source.Name == parentSourceName,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+            SampleUsingParentId = (ref ActivityCreationOptions<string> _) => ActivitySamplingResult.AllDataAndRecorded,
+            ActivityStopped = activity => stopped.Enqueue(activity),
+        };
+        ActivitySource.AddActivityListener(listener);
+        return listener;
     }
 
     private static UcpCart CreateCart()
@@ -407,14 +482,30 @@ public class UcpCheckoutServiceTests
     private sealed class StubDistributedCache : IDistributedCache
     {
         private readonly Dictionary<string, byte[]> _items = [];
+        private readonly System.Exception _getException;
+
+        public StubDistributedCache(System.Exception getException = null)
+        {
+            _getException = getException;
+        }
 
         public byte[] Get(string key)
         {
+            if (_getException != null)
+            {
+                throw _getException;
+            }
+
             return _items.GetValueOrDefault(key);
         }
 
         public Task<byte[]> GetAsync(string key, CancellationToken token = default)
         {
+            if (_getException != null)
+            {
+                return Task.FromException<byte[]>(_getException);
+            }
+
             return Task.FromResult(Get(key));
         }
 
@@ -447,6 +538,11 @@ public class UcpCheckoutServiceTests
         {
             Set(key, value, options);
             return Task.CompletedTask;
+        }
+
+        public void SetRaw(string key, string value)
+        {
+            _items[key] = Encoding.UTF8.GetBytes(value);
         }
     }
 }

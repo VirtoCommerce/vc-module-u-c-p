@@ -38,7 +38,9 @@ public static class ModuleConstants
         list_carts requires an explicit buyer_id. Preserve and reuse cart.buyer_id from cart responses; do not request a global anonymous cart list. buyer_id is buyer scope, not Platform authentication.
         update_cart accepts the complete desired line_items state, not a delta. Reuse the existing cart_id and buyer_id; never call create_cart as a fallback for changing an existing cart.
         After create_cart or update_cart, inspect line_items and messages. If an expected line is missing, call get_cart once to account for asynchronous settling; do not claim that an item was added unless the re-read contains it.
-        Read-only xapi_execution_failed errors from search_products or get_product may be transient; retry the same read-only tool once. Do not automatically retry mutating cart or checkout tools.
+        XAPI GraphQL errors are returned unchanged in MCP structuredContent. Inspect their codes, paths, locations, extensions, and partial data before deciding what to do.
+        Every MCP tool result includes a model-visible "Trace ID: ..." content block and _meta.trace_id when an active trace exists. Preserve that id with any reported result or failure so operators can open the exact MCP -> UCP -> XAPI trace.
+        A read-only XAPI failure from search_products or get_product may be transient; retry the same read-only tool at most once. Do not automatically retry mutating cart or checkout tools.
         For hosted checkout, return checkout.continue_url to the buyer and keep cart_id for later track_order.
         After hosted checkout, use the saved cart_id and buyer_id with track_order when the user asks about the order; do not require an order number when those saved identifiers are available.
         """;
@@ -60,6 +62,7 @@ public static class ModuleConstants
     public static class Headers
     {
         public const string CorrelationId = "X-Correlation-Id";
+        public const string TraceId = "X-Trace-Id";
         public const string IdempotencyKey = "Idempotency-Key";
         public const string AgentApiKey = "X-Agent-Api-Key";
         public const string BuyerUserId = "X-Buyer-User-Id";
@@ -79,7 +82,9 @@ public static class ModuleConstants
         public const string ProductNotFound = "product_not_found";
         public const string CartNotFound = "cart_not_found";
         public const string OrderNotFound = "order_not_found";
+        [System.Obsolete("XAPI GraphQL errors are returned unchanged and no longer mapped to this synthetic UCP error code.")]
         public const string XApiExecutionFailed = "xapi_execution_failed";
+        public const string XApiInvalidResponse = "xapi_invalid_response";
         public const string InvalidRequest = "invalid_request";
     }
 
@@ -123,26 +128,47 @@ public static class ModuleConstants
         public const string ListCountries = "list_countries";
         public const string ResolveCountry = "resolve_country";
         public const string ListRegions = "list_regions";
+        public const string RestoreHandoff = "restore_handoff";
     }
 
     public static class McpTools
     {
-        public const string GetStoreCapabilities = "get_store_capabilities";
-        public const string SearchProducts = "search_products";
-        public const string GetProduct = "get_product";
-        public const string CreateCart = "create_cart";
-        public const string ListCarts = "list_carts";
-        public const string GetCart = "get_cart";
-        public const string UpdateCart = "update_cart";
-        public const string CreateCheckout = "create_checkout";
-        public const string UpdateCheckout = "update_checkout";
-        public const string CheckoutAndHandoff = "checkout_and_handoff";
-        public const string GetPaymentHandlers = "get_payment_handlers";
-        public const string HandoffCheckout = "handoff_checkout";
-        public const string TrackOrder = "track_order";
-        public const string ListCountries = "list_countries";
-        public const string ResolveCountry = "resolve_country";
-        public const string ListRegions = "list_regions";
+        public const string GetStoreCapabilities = Operations.GetStoreCapabilities;
+        public const string SearchProducts = Operations.SearchProducts;
+        public const string GetProduct = Operations.GetProduct;
+        public const string CreateCart = Operations.CreateCart;
+        public const string ListCarts = Operations.ListCarts;
+        public const string GetCart = Operations.GetCart;
+        public const string UpdateCart = Operations.UpdateCart;
+        public const string CreateCheckout = Operations.CreateCheckout;
+        public const string UpdateCheckout = Operations.UpdateCheckout;
+        public const string CheckoutAndHandoff = Operations.CheckoutAndHandoff;
+        public const string GetPaymentHandlers = Operations.GetPaymentHandlers;
+        public const string HandoffCheckout = Operations.HandoffCheckout;
+        public const string TrackOrder = Operations.TrackOrder;
+        public const string ListCountries = Operations.ListCountries;
+        public const string ResolveCountry = Operations.ResolveCountry;
+        public const string ListRegions = Operations.ListRegions;
+
+        public static bool IsUcpTool(string name)
+        {
+            return name is GetStoreCapabilities
+                or SearchProducts
+                or GetProduct
+                or CreateCart
+                or ListCarts
+                or GetCart
+                or UpdateCart
+                or CreateCheckout
+                or UpdateCheckout
+                or CheckoutAndHandoff
+                or GetPaymentHandlers
+                or HandoffCheckout
+                or TrackOrder
+                or ListCountries
+                or ResolveCountry
+                or ListRegions;
+        }
     }
 
     public static class Security

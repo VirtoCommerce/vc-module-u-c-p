@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Security.Claims;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -167,24 +168,24 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
-    public async Task GetProduct_ToleratesPropertyValueResolverErrorWhenProductDataIsAvailable()
+    public async Task GetProduct_PropagatesPropertyValueResolverErrorWithPartialData()
     {
-        var executor = new SequenceXApiExecutor(
-            PartialProductResponseJson,
-            """{"data":{"products":{"items":[{"id":"product-1","variations":[]}]}}}""");
+        var executor = new StubXApiExecutor(PartialProductResponseJson, succeeded: false);
         var service = new UcpCatalogService(
             executor,
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
 
-        var response = await service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken);
+        var exception = await Assert.ThrowsAsync<XApiResponseException>(() =>
+            service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
-        Assert.Equal("product-1", response.Product.Id);
-        Assert.Contains(response.Product.Attributes, attribute => attribute.Name == "ReleaseYear" && attribute.Value == null);
+        Assert.Equal("XCatalog", exception.Schema);
+        Assert.Equal(1, exception.ErrorCount);
+        Assert.Equal(PartialProductResponseJson, exception.Result.Json);
     }
 
     [Fact]
-    public async Task GetProduct_DoesNotTolerateUnrelatedGraphQlError()
+    public async Task GetProduct_PropagatesUnrelatedGraphQlError()
     {
         var executor = new StubXApiExecutor(
             PartialProductResponseJson
@@ -196,9 +197,11 @@ public class UcpCatalogServiceTests
             new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
             Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
 
-        var exception = await Assert.ThrowsAsync<UcpException>(() => service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+        var exception = await Assert.ThrowsAsync<XApiResponseException>(() => service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
-        Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
+        Assert.Equal("XCatalog", exception.Schema);
+        Assert.Equal(1, exception.ErrorCount);
+        Assert.Equal(executor.LastResultJson, exception.Result.Json);
     }
 
     [Fact]
@@ -212,8 +215,46 @@ public class UcpCatalogServiceTests
         var exception = await Assert.ThrowsAsync<UcpException>(() =>
             service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
 
-        Assert.Equal(ModuleConstants.ErrorCodes.XApiExecutionFailed, exception.Code);
-        Assert.Equal("XCatalog execution failed.", exception.Message);
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiInvalidResponse, exception.Code);
+        Assert.Equal(500, exception.StatusCode);
+        Assert.Equal("XCatalog failed without a GraphQL error response.", exception.Message);
+    }
+
+    [Theory]
+    [InlineData("[]", "non-object GraphQL response")]
+    [InlineData("null", "non-object GraphQL response")]
+    [InlineData("{}", "without object data")]
+    [InlineData("{\"data\":null}", "without object data")]
+    [InlineData("{\"errors\":null,\"data\":{}}", "invalid GraphQL errors field")]
+    public async Task SearchProducts_MalformedGraphQlShape_UsesInvalidResponse(string json, string expectedMessage)
+    {
+        var service = new UcpCatalogService(
+            new StubXApiExecutor(json),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() =>
+            service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiInvalidResponse, exception.Code);
+        Assert.Equal(500, exception.StatusCode);
+        Assert.Contains(expectedMessage, exception.Message);
+    }
+
+    [Fact]
+    public async Task SearchProducts_InvalidJson_PreservesParserExceptionForTelemetry()
+    {
+        var service = new UcpCatalogService(
+            new StubXApiExecutor("{"),
+            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() =>
+            service.SearchProducts(new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.XApiInvalidResponse, exception.Code);
+        Assert.Equal(StatusCodes.Status500InternalServerError, exception.StatusCode);
+        Assert.IsAssignableFrom<JsonException>(exception.InnerException);
     }
 
     [Fact]
@@ -236,6 +277,8 @@ public class UcpCatalogServiceTests
     private sealed class StubXApiExecutor : IXApiInProcessExecutor
     {
         private readonly string _json;
+
+        public string LastResultJson => _json;
 
         public StubXApiExecutor(string json, bool succeeded = true)
         {

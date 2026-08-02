@@ -2,8 +2,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
+using VirtoCommerce.UCP.Web.Filters;
 using VirtoCommerce.UCP.Web.Models;
 
 namespace VirtoCommerce.UCP.Web.Controllers.Api;
@@ -20,9 +22,9 @@ public class UcpCatalogController : ControllerBase
     }
 
     [HttpPost("search")]
+    [UcpOperation(ModuleConstants.Operations.SearchProducts, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpCatalogSearchResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCatalogSearchResponse>> SearchProducts(
         [FromBody] UcpCatalogSearchRequest request,
         CancellationToken cancellationToken)
@@ -31,10 +33,10 @@ public class UcpCatalogController : ControllerBase
     }
 
     [HttpGet("products/{id}")]
+    [UcpOperation(ModuleConstants.Operations.GetProduct, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpProductResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpProductResponse>> GetProduct(
         string id,
         [FromQuery] UcpCatalogProductQuery query,

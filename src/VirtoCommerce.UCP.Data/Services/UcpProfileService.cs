@@ -5,14 +5,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
-using VirtoCommerce.UCP.Core;
-using VirtoCommerce.UCP.Core.Models;
-using VirtoCommerce.UCP.Core.Options;
-using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.StoreModule.Core.Model;
 using VirtoCommerce.StoreModule.Core.Model.Search;
 using VirtoCommerce.StoreModule.Core.Services;
+using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
+using VirtoCommerce.UCP.Core.Models;
+using VirtoCommerce.UCP.Core.Options;
+using VirtoCommerce.UCP.Core.Services;
 
 namespace VirtoCommerce.UCP.Data.Services;
 
@@ -173,6 +174,7 @@ public class UcpProfileService : IUcpProfileService
             {
                 AgentApiKey = ModuleConstants.Headers.AgentApiKey,
                 CorrelationId = ModuleConstants.Headers.CorrelationId,
+                TraceId = ModuleConstants.Headers.TraceId,
                 IdempotencyKey = ModuleConstants.Headers.IdempotencyKey,
                 BuyerContext =
                 {
@@ -190,7 +192,7 @@ public class UcpProfileService : IUcpProfileService
                     ModuleConstants.ErrorCodes.ProductNotFound,
                     ModuleConstants.ErrorCodes.CartNotFound,
                     ModuleConstants.ErrorCodes.OrderNotFound,
-                    ModuleConstants.ErrorCodes.XApiExecutionFailed,
+                    ModuleConstants.ErrorCodes.XApiInvalidResponse,
                 },
             },
         };
@@ -347,7 +349,10 @@ public class UcpProfileService : IUcpProfileService
             return null;
         }
 
-        return await _storeService.GetNoCloneAsync(_options.DefaultStoreId);
+        return await UcpDiagnostics.ExecuteDependency(
+            "stores",
+            "GetStore",
+            () => _storeService.GetNoCloneAsync(_options.DefaultStoreId));
     }
 
     protected virtual async Task<IList<Store>> SearchOpenStores()
@@ -357,11 +362,14 @@ public class UcpProfileService : IUcpProfileService
             return new List<Store>();
         }
 
-        var result = await _storeSearchService.SearchAsync(new StoreSearchCriteria
-        {
-            StoreStates = new[] { StoreState.Open },
-            Take = StoreSearchTake,
-        });
+        var result = await UcpDiagnostics.ExecuteDependency(
+            "stores",
+            "SearchStores",
+            () => _storeSearchService.SearchAsync(new StoreSearchCriteria
+            {
+                StoreStates = new[] { StoreState.Open },
+                Take = StoreSearchTake,
+            }));
 
         return result?.Results?
             .Where(store => store != null)

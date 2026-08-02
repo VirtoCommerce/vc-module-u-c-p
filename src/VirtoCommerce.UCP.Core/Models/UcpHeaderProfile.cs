@@ -8,6 +8,9 @@ public class UcpHeaderProfile
     [JsonProperty("correlation_id")]
     public string CorrelationId { get; set; }
 
+    [JsonProperty("trace_id")]
+    public string TraceId { get; set; }
+
     [JsonProperty("idempotency_key")]
     public string IdempotencyKey { get; set; }
 

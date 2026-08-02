@@ -58,7 +58,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             User = BuildBuyerPrincipal(),
         }, cancellationToken);
 
-        using var document = ParseGraphQlResult(result, "XCatalog", IsRecoverablePropertyValueError);
+        using var document = ParseGraphQlResult(result, "XCatalog");
         var products = document.RootElement
             .GetProperty("data")
             .GetProperty("products");
@@ -107,7 +107,7 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             User = BuildBuyerPrincipal(),
         }, cancellationToken);
 
-        using var document = ParseGraphQlResult(result, "XCatalog", IsRecoverablePropertyValueError);
+        using var document = ParseGraphQlResult(result, "XCatalog");
         var productElement = document.RootElement
             .GetProperty("data")
             .GetProperty("product");
@@ -359,23 +359,6 @@ public class UcpCatalogService : UcpServiceBase, IUcpCatalogService
             Currency = money.TryGetProperty("currency", out var currency) ? ReadString(currency, "code") : null,
             FormattedAmount = ReadString(money, "formattedAmount"),
         };
-    }
-
-    private static bool IsRecoverablePropertyValueError(JsonElement error)
-    {
-        if (error.TryGetProperty("path", out var path) && path.ValueKind == JsonValueKind.Array)
-        {
-            var pathSegments = path.EnumerateArray().ToList();
-            if (pathSegments.Count > 0 &&
-                pathSegments[^1].ValueKind == JsonValueKind.String &&
-                string.Equals(pathSegments[^1].GetString(), "value", StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        var message = ReadString(error, "message");
-        return message?.Contains("resolve field 'value'", StringComparison.OrdinalIgnoreCase) == true;
     }
 
     protected const string ProductFields = """

@@ -4,10 +4,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using VirtoCommerce.Platform.Core.Common;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
-using VirtoCommerce.Platform.Core.Common;
 
 namespace VirtoCommerce.UCP.Data.Services;
 
@@ -29,7 +30,10 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
     {
         query ??= new UcpCountriesQuery();
 
-        var countries = await _countriesService.GetCountriesAsync();
+        var countries = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountries",
+            _countriesService.GetCountriesAsync);
         cancellationToken.ThrowIfCancellationRequested();
 
         var normalizedQuery = query.Query?.Trim();
@@ -86,7 +90,10 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, $"Country '{countryId}' was not found.", StatusCodes.Status404NotFound);
         }
 
-        var regions = await _countriesService.GetCountryRegionsAsync(country.Id);
+        var regions = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountryRegions",
+            () => _countriesService.GetCountryRegionsAsync(country.Id));
         cancellationToken.ThrowIfCancellationRequested();
 
         return new UcpRegionsResponse
@@ -110,7 +117,10 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
             return country;
         }
 
-        var countries = await _countriesService.GetCountriesAsync();
+        var countries = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountries",
+            _countriesService.GetCountriesAsync);
         cancellationToken.ThrowIfCancellationRequested();
 
         return countries.FirstOrDefault(country => string.Equals(country.Name, normalizedQuery, StringComparison.OrdinalIgnoreCase))
@@ -121,7 +131,10 @@ public class UcpGeographyService : UcpServiceBase, IUcpGeographyService
 
     protected virtual async Task<UcpCountry> MapCountry(Country country, CancellationToken cancellationToken)
     {
-        var regions = await _countriesService.GetCountryRegionsAsync(country.Id);
+        var regions = await UcpDiagnostics.ExecuteDependency(
+            "countries",
+            "GetCountryRegions",
+            () => _countriesService.GetCountryRegionsAsync(country.Id));
         cancellationToken.ThrowIfCancellationRequested();
 
         return new UcpCountry

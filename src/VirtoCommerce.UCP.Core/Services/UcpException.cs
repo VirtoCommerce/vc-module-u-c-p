@@ -6,7 +6,12 @@ namespace VirtoCommerce.UCP.Core.Services;
 public class UcpException : Exception
 {
     public UcpException(string code, string message, int statusCode = 400)
-        : base(message)
+        : this(code, message, statusCode, null)
+    {
+    }
+
+    public UcpException(string code, string message, int statusCode, Exception innerException)
+        : base(message, innerException)
     {
         Code = code;
         StatusCode = statusCode;

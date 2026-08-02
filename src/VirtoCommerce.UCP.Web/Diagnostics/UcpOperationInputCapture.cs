@@ -1,0 +1,779 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Models;
+using VirtoCommerce.UCP.Web.Models;
+
+namespace VirtoCommerce.UCP.Web.Diagnostics;
+
+internal sealed class UcpOperationInputCapture
+{
+    private const int MaxInputJsonLength = 4096;
+    private const int MaxCollectionItems = 20;
+    private const int MaxSummaryItems = UcpTelemetrySnapshotSanitizer.MaxSummaryItems;
+    private const int MaxIdentifierLength = UcpTelemetrySnapshotSanitizer.MaxIdentifierLength;
+    private const int MaxTextLength = UcpTelemetrySnapshotSanitizer.MaxTextLength;
+
+    private readonly JsonObject _input = new();
+    private readonly UcpTelemetrySnapshotSanitizer _sanitizer = new();
+
+    public string ArgumentNames { get; private set; }
+    public string RequestedStoreId { get; private set; }
+    public string EffectiveStoreId { get; private set; }
+    public string StoreSource { get; private set; }
+    public string EffectiveCurrency { get; private set; }
+    public string EffectiveCulture { get; private set; }
+    public bool InputTruncated => _sanitizer.InputTruncated;
+    public string TruncatedFields => _sanitizer.TruncatedFields;
+
+    public static UcpOperationInputCapture CreateMcp(string operation, IDictionary<string, JsonElement> arguments)
+    {
+        var capture = new UcpOperationInputCapture();
+        capture.CaptureMcp(operation, arguments);
+        return capture;
+    }
+
+    public static UcpOperationInputCapture CreateRest(string operation, IDictionary<string, object> arguments)
+    {
+        var capture = new UcpOperationInputCapture();
+        capture.CaptureRest(operation, arguments);
+        return capture;
+    }
+
+    public string GetInputJson()
+    {
+        return _sanitizer.SerializeBounded(_input, MaxInputJsonLength, "input_json");
+    }
+
+    public void CaptureEffectiveContext(XApiRequestTelemetrySnapshot snapshot)
+    {
+        if (snapshot == null)
+        {
+            return;
+        }
+
+        EffectiveStoreId = FirstNotEmpty(snapshot.StoreId, EffectiveStoreId);
+        EffectiveCurrency = FirstNotEmpty(snapshot.CurrencyCode, EffectiveCurrency);
+        EffectiveCulture = FirstNotEmpty(snapshot.CultureName, EffectiveCulture);
+        StoreSource = ResolveStoreSource();
+
+        SetEffectiveValue("store", EffectiveStoreId, StoreSource);
+        SetEffectiveValue("currency", EffectiveCurrency, null);
+        SetEffectiveValue("language", EffectiveCulture, null);
+    }
+
+    public void CaptureMcp(string operation, IDictionary<string, JsonElement> arguments)
+    {
+        arguments ??= new Dictionary<string, JsonElement>();
+        ArgumentNames = UcpTelemetrySnapshotSanitizer.JoinNames(arguments.Keys);
+        switch (operation)
+        {
+            case ModuleConstants.Operations.GetStoreCapabilities:
+                break;
+            case ModuleConstants.Operations.SearchProducts:
+                AddMcpText(arguments, _input, "query", "query");
+                AddMcpCommerceContext(arguments);
+                AddMcpNumber(arguments, _input, "price_min", "price_min");
+                AddMcpNumber(arguments, _input, "price_max", "price_max");
+                AddMcpNumber(arguments, _input, "limit", "limit");
+                break;
+            case ModuleConstants.Operations.GetProduct:
+                AddMcpIdentifier(arguments, _input, "id", "id");
+                AddMcpIdentifier(arguments, _input, "product_id", "product_id");
+                AddResolvedAlias(_input, "product", GetMcpString(arguments, "product_id"), "product_id", GetMcpString(arguments, "id"), "id");
+                AddMcpCommerceContext(arguments);
+                break;
+            case ModuleConstants.Operations.CreateCart:
+            case ModuleConstants.Operations.UpdateCart:
+                if (operation == ModuleConstants.Operations.UpdateCart)
+                {
+                    AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
+                }
+                AddMcpCartContext(arguments);
+                AddMcpLineItems(arguments);
+                AddMcpCollectionCount(arguments, "coupons", "coupon_count");
+                break;
+            case ModuleConstants.Operations.ListCarts:
+                AddMcpCartContext(arguments);
+                AddMcpFingerprint(arguments, "cursor", "cursor");
+                AddMcpNumber(arguments, _input, "limit", "limit");
+                AddMcpText(arguments, _input, "sort", "sort");
+                break;
+            case ModuleConstants.Operations.GetCart:
+                AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
+                AddMcpCartContext(arguments);
+                break;
+            case ModuleConstants.Operations.CreateCheckout:
+            case ModuleConstants.Operations.CheckoutAndHandoff:
+                AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
+                AddMcpCheckoutContext(arguments);
+                break;
+            case ModuleConstants.Operations.UpdateCheckout:
+            case ModuleConstants.Operations.HandoffCheckout:
+                AddMcpIdentifier(arguments, _input, "checkout_id", "checkout_id");
+                AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
+                AddResolvedAlias(_input, "cart", GetMcpString(arguments, "cart_id"), "cart_id", GetMcpString(arguments, "checkout_id"), "checkout_id");
+                AddMcpCheckoutContext(arguments);
+                break;
+            case ModuleConstants.Operations.GetPaymentHandlers:
+                AddMcpIdentifier(arguments, _input, "checkout_id", "checkout_id");
+                break;
+            case ModuleConstants.Operations.TrackOrder:
+                AddMcpIdentifier(arguments, _input, "order_id", "order_id");
+                AddMcpIdentifier(arguments, _input, "order_number", "order_number");
+                AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
+                AddLookupKind(GetMcpString(arguments, "order_id"), GetMcpString(arguments, "order_number"), GetMcpString(arguments, "cart_id"));
+                AddMcpCartContext(arguments);
+                break;
+            case ModuleConstants.Operations.ListCountries:
+                AddMcpText(arguments, _input, "query", "query");
+                AddMcpNumber(arguments, _input, "limit", "limit");
+                break;
+            case ModuleConstants.Operations.ResolveCountry:
+                AddMcpText(arguments, _input, "query", "query");
+                break;
+            case ModuleConstants.Operations.ListRegions:
+                AddMcpIdentifier(arguments, _input, "country_id", "country_id");
+                break;
+        }
+    }
+
+    public void CaptureRest(string operation, IDictionary<string, object> arguments)
+    {
+        arguments ??= new Dictionary<string, object>();
+        ArgumentNames = UcpTelemetrySnapshotSanitizer.JoinNames(arguments.Keys.Where(x => !string.Equals(x, "cancellationToken", StringComparison.OrdinalIgnoreCase)));
+        switch (operation)
+        {
+            case ModuleConstants.Operations.GetStoreCapabilities:
+                break;
+            case ModuleConstants.Operations.SearchProducts:
+                CaptureCatalogRequest(GetArgument<UcpCatalogSearchRequest>(arguments, "request"));
+                break;
+            case ModuleConstants.Operations.GetProduct:
+                AddIdentifier(_input, "id", GetArgumentString(arguments, "id"), "id");
+                CaptureCatalogProductQuery(GetArgument<UcpCatalogProductQuery>(arguments, "query"));
+                break;
+            case ModuleConstants.Operations.CreateCart:
+                CaptureCartRequest(GetArgument<UcpCartRequest>(arguments, "request"), null);
+                break;
+            case ModuleConstants.Operations.ListCarts:
+                CaptureCartListQuery(GetArgument<UcpCartListQuery>(arguments, "query"));
+                break;
+            case ModuleConstants.Operations.GetCart:
+                AddIdentifier(_input, "cart_id", GetArgumentString(arguments, "cartId"), "cart_id");
+                CaptureCartQuery(GetArgument<UcpCartQuery>(arguments, "query"));
+                break;
+            case ModuleConstants.Operations.UpdateCart:
+                CaptureCartRequest(GetArgument<UcpCartRequest>(arguments, "request"), GetArgumentString(arguments, "cartId"));
+                break;
+            case ModuleConstants.Operations.CreateCheckout:
+                CaptureCheckoutRequest(GetArgument<UcpCheckoutRequest>(arguments, "request"), null);
+                break;
+            case ModuleConstants.Operations.UpdateCheckout:
+            case ModuleConstants.Operations.HandoffCheckout:
+                CaptureCheckoutRequest(GetArgument<UcpCheckoutRequest>(arguments, "request"), GetArgumentString(arguments, "checkoutId"));
+                break;
+            case ModuleConstants.Operations.GetPaymentHandlers:
+                AddIdentifier(_input, "checkout_id", GetArgumentString(arguments, "checkoutId"), "checkout_id");
+                break;
+            case ModuleConstants.Operations.RestoreHandoff:
+                CaptureHandoffRestore(GetArgument<UcpHandoffRestoreRequest>(arguments, "request"));
+                break;
+            case ModuleConstants.Operations.TrackOrder:
+                CaptureOrderTrackingQuery(GetArgument<UcpOrderTrackingQuery>(arguments, "query"), GetArgumentString(arguments, "orderId"));
+                break;
+            case ModuleConstants.Operations.ListCountries:
+                AddText(_input, "query", GetArgumentString(arguments, "query"), "query");
+                AddNumber(_input, "limit", GetArgumentNullableInt(arguments, "limit"));
+                break;
+            case ModuleConstants.Operations.ResolveCountry:
+                AddText(_input, "query", GetArgumentString(arguments, "query"), "query");
+                break;
+            case ModuleConstants.Operations.ListRegions:
+                AddIdentifier(_input, "country_id", GetArgumentString(arguments, "countryId"), "country_id");
+                break;
+        }
+    }
+
+    private void CaptureCatalogRequest(UcpCatalogSearchRequest request)
+    {
+        if (request == null)
+        {
+            return;
+        }
+
+        AddText(_input, "query", request.Query, "query");
+        AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
+        AddNumber(_input, "limit", request.Limit ?? request.Pagination?.Limit);
+        AddNumber(_input, "price_min", request.Filters?.Price?.Min);
+        AddNumber(_input, "price_max", request.Filters?.Price?.Max);
+        AddIdentifierArray(_input, "category_ids", request.Filters?.Categories, "category_ids");
+        AddFingerprint(_input, "cursor", request.Pagination?.Cursor, "cursor");
+    }
+
+    private void CaptureCatalogProductQuery(UcpCatalogProductQuery query)
+    {
+        if (query != null)
+        {
+            AddCommerceContext(query.StoreId, null, query.Currency, null, query.CultureName, null);
+        }
+    }
+
+    private void CaptureCartRequest(UcpCartRequest request, string routeCartId)
+    {
+        if (!string.IsNullOrWhiteSpace(routeCartId))
+        {
+            AddIdentifier(_input, "cart_id", routeCartId, "cart_id");
+        }
+
+        if (request == null)
+        {
+            return;
+        }
+
+        AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
+        AddPrivateIdentifierPair("buyer", request.BuyerId, request.Context?.BuyerId);
+        AddPrivateIdentifierPair("organization", request.OrganizationId, request.Context?.OrganizationId);
+        AddPrivateIdentifierPair("cart_name", request.CartName, request.Context?.CartName);
+        AddTextPair("cart_type", request.CartType, request.Context?.CartType);
+        AddLineItems(request.LineItems);
+        _input["coupon_count"] = request.Coupons?.Count ?? 0;
+    }
+
+    private void CaptureCartListQuery(UcpCartListQuery query)
+    {
+        if (query == null)
+        {
+            return;
+        }
+
+        AddCommerceContext(query.StoreId, null, query.Currency, null, query.CultureName, null);
+        AddPrivateIdentifierPresence("buyer_id", query.BuyerId);
+        AddPrivateIdentifierPresence("organization_id", query.OrganizationId);
+        AddText(_input, "cart_type", query.CartType, "cart_type");
+        AddFingerprint(_input, "cursor", query.Cursor, "cursor");
+        AddNumber(_input, "limit", query.Limit);
+        AddText(_input, "sort", query.Sort, "sort");
+    }
+
+    private void CaptureCartQuery(UcpCartQuery query)
+    {
+        if (query != null)
+        {
+            AddCommerceContext(query.StoreId, null, query.Currency, null, query.CultureName, null);
+        }
+    }
+
+    private void CaptureCheckoutRequest(UcpCheckoutRequest request, string routeCheckoutId)
+    {
+        if (!string.IsNullOrWhiteSpace(routeCheckoutId))
+        {
+            AddIdentifier(_input, "checkout_id", routeCheckoutId, "checkout_id");
+        }
+
+        if (request == null)
+        {
+            return;
+        }
+
+        AddIdentifier(_input, "cart_id", request.CartId, "cart_id");
+        if (!string.IsNullOrWhiteSpace(routeCheckoutId))
+        {
+            AddResolvedAlias(_input, "cart", request.CartId, "cart_id", routeCheckoutId, "checkout_id");
+        }
+        AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
+        AddPrivateIdentifierPair("buyer", request.BuyerId, request.Context?.BuyerId);
+        AddPrivateIdentifierPair("organization", request.OrganizationId, request.Context?.OrganizationId);
+        AddBuyerPresence(request.Buyer, null, null, null);
+        AddAddressPresence("shipping_address", request.ShippingAddress);
+        AddAddressPresence("billing_address", request.BillingAddress);
+        AddIdentifier(_input, "shipping_method_id", request.ShippingMethodId, "shipping_method_id");
+        AddIdentifier(_input, "payment_handler", request.PaymentHandler, "payment_handler");
+        AddSensitivePresence("notes", request.Notes);
+    }
+
+    private void CaptureHandoffRestore(UcpHandoffRestoreRequest request)
+    {
+        if (request?.UcpSession == null)
+        {
+            return;
+        }
+
+        _input["session_present"] = true;
+        _input["session_length"] = request.UcpSession.Length;
+        _input["session_fingerprint"] = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(request.UcpSession);
+    }
+
+    private void CaptureOrderTrackingQuery(UcpOrderTrackingQuery query, string routeOrderId)
+    {
+        AddIdentifier(_input, "route_order_id", routeOrderId, "route_order_id");
+        AddIdentifier(_input, "order_id", FirstNotEmpty(routeOrderId, query?.OrderId), "order_id");
+        AddIdentifier(_input, "order_number", query?.OrderNumber, "order_number");
+        AddIdentifier(_input, "cart_id", query?.CartId, "cart_id");
+        AddLookupKind(FirstNotEmpty(routeOrderId, query?.OrderId), query?.OrderNumber, query?.CartId);
+        if (query != null)
+        {
+            AddPrivateIdentifierPresence("buyer_id", query.BuyerId);
+            AddPrivateIdentifierPresence("organization_id", query.OrganizationId);
+            AddText(_input, "language", query.CultureName, "language");
+        }
+    }
+
+    private void AddMcpCommerceContext(IDictionary<string, JsonElement> arguments)
+    {
+        AddCommerceContext(
+            GetMcpString(arguments, "store_id"), null,
+            GetMcpString(arguments, "currency"), null,
+            GetMcpString(arguments, "language"), null);
+    }
+
+    private void AddMcpCartContext(IDictionary<string, JsonElement> arguments)
+    {
+        AddMcpCommerceContext(arguments);
+        AddPrivateIdentifierPresence("buyer_id", GetMcpString(arguments, "buyer_id"));
+        AddPrivateIdentifierPresence("organization_id", GetMcpString(arguments, "organization_id"));
+        AddPrivateIdentifierPresence("cart_name", GetMcpString(arguments, "cart_name"));
+        AddMcpText(arguments, _input, "cart_type", "cart_type");
+    }
+
+    private void AddMcpCheckoutContext(IDictionary<string, JsonElement> arguments)
+    {
+        AddMcpCartContext(arguments);
+        AddMcpIdentifier(arguments, _input, "payment_handler", "payment_handler");
+        AddMcpIdentifier(arguments, _input, "shipping_method_id", "shipping_method_id");
+        AddMcpBuyerPresence(arguments);
+        AddMcpAddressPresence(arguments, "shipping_address");
+        AddMcpAddressPresence(arguments, "billing_address");
+        if (arguments.TryGetValue("notes", out var notes) && notes.ValueKind == JsonValueKind.String)
+        {
+            AddSensitivePresence("notes", notes.GetString());
+        }
+    }
+
+    private void AddCommerceContext(
+        string topLevelStore,
+        string contextStore,
+        string topLevelCurrency,
+        string contextCurrency,
+        string topLevelLanguage,
+        string contextLanguage)
+    {
+        RequestedStoreId = FirstNotEmpty(topLevelStore, contextStore, RequestedStoreId);
+        AddContextValue("store", topLevelStore, contextStore);
+        AddContextValue("currency", topLevelCurrency, contextCurrency);
+        AddContextValue("language", topLevelLanguage, contextLanguage);
+    }
+
+    private void AddContextValue(string name, string topLevelValue, string contextValue)
+    {
+        if (string.IsNullOrWhiteSpace(topLevelValue) && string.IsNullOrWhiteSpace(contextValue))
+        {
+            return;
+        }
+
+        var value = new JsonObject();
+        AddIdentifier(value, "top_level", topLevelValue, $"{name}.top_level");
+        AddIdentifier(value, "context", contextValue, $"{name}.context");
+        value["requested"] = _sanitizer.Sanitize(FirstNotEmpty(topLevelValue, contextValue), MaxIdentifierLength, $"{name}.requested");
+        value["source"] = !string.IsNullOrWhiteSpace(topLevelValue) ? "top_level" : "context";
+        _input[name] = value;
+    }
+
+    private void SetEffectiveValue(string name, string effectiveValue, string source)
+    {
+        if (string.IsNullOrWhiteSpace(effectiveValue))
+        {
+            return;
+        }
+
+        var value = _input[name] as JsonObject ?? new JsonObject();
+        value["effective"] = _sanitizer.Sanitize(effectiveValue, MaxIdentifierLength, $"{name}.effective");
+        if (!string.IsNullOrWhiteSpace(source))
+        {
+            value["source"] = source;
+        }
+        _input[name] = value;
+    }
+
+    private void AddPrivateIdentifierPair(string name, string topLevelValue, string contextValue)
+    {
+        if (string.IsNullOrWhiteSpace(topLevelValue) && string.IsNullOrWhiteSpace(contextValue))
+        {
+            return;
+        }
+
+        _input[name] = new JsonObject
+        {
+            ["top_level_present"] = !string.IsNullOrWhiteSpace(topLevelValue),
+            ["context_present"] = !string.IsNullOrWhiteSpace(contextValue),
+            ["effective_present"] = true,
+            ["source"] = !string.IsNullOrWhiteSpace(topLevelValue) ? "top_level" : "context",
+        };
+    }
+
+    private void AddPrivateIdentifierPresence(string name, string value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            _input[$"{name}_present"] = true;
+        }
+    }
+
+    private void AddTextPair(string name, string topLevelValue, string contextValue)
+    {
+        if (string.IsNullOrWhiteSpace(topLevelValue) && string.IsNullOrWhiteSpace(contextValue))
+        {
+            return;
+        }
+
+        var value = new JsonObject();
+        AddText(value, "top_level", topLevelValue, $"{name}.top_level");
+        AddText(value, "context", contextValue, $"{name}.context");
+        value["effective"] = _sanitizer.Sanitize(FirstNotEmpty(topLevelValue, contextValue), MaxTextLength, $"{name}.effective");
+        value["source"] = !string.IsNullOrWhiteSpace(topLevelValue) ? "top_level" : "context";
+        _input[name] = value;
+    }
+
+    private void AddResolvedAlias(JsonObject target, string name, string primaryValue, string primarySource, string fallbackValue, string fallbackSource)
+    {
+        var resolved = FirstNotEmpty(primaryValue, fallbackValue);
+        if (string.IsNullOrWhiteSpace(resolved))
+        {
+            return;
+        }
+
+        target[$"resolved_{name}_id"] = _sanitizer.Sanitize(resolved, MaxIdentifierLength, $"resolved_{name}_id");
+        target[$"resolved_{name}_source"] = !string.IsNullOrWhiteSpace(primaryValue) ? primarySource : fallbackSource;
+    }
+
+    private void AddLookupKind(string orderId, string orderNumber, string cartId)
+    {
+        _input["lookup_kind"] = !string.IsNullOrWhiteSpace(orderId)
+            ? "order_id"
+            : !string.IsNullOrWhiteSpace(orderNumber)
+                ? "order_number"
+                : !string.IsNullOrWhiteSpace(cartId)
+                    ? "cart_id"
+                    : "missing";
+    }
+
+    private void AddMcpLineItems(IDictionary<string, JsonElement> arguments)
+    {
+        if (!arguments.TryGetValue("line_items", out var value) || value.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        var result = new JsonArray();
+        var count = 0;
+        foreach (var item in value.EnumerateArray())
+        {
+            if (count++ >= MaxCollectionItems)
+            {
+                _sanitizer.MarkTruncated("line_items");
+                break;
+            }
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            var output = new JsonObject();
+            AddIdentifier(output, "id", GetJsonString(item, "id"), "line_items.id");
+            AddIdentifier(output, "product_id", GetJsonString(item, "product_id"), "line_items.product_id");
+            if (item.TryGetProperty("quantity", out var quantity) && quantity.TryGetInt32(out var number))
+            {
+                output["quantity"] = number;
+            }
+            result.Add(output);
+        }
+
+        _input["line_items"] = result;
+        _input["line_item_count"] = value.GetArrayLength();
+    }
+
+    private void AddLineItems(IList<UcpCartLineItemRequest> items)
+    {
+        if (items == null)
+        {
+            return;
+        }
+
+        var result = new JsonArray();
+        foreach (var item in items.Take(MaxCollectionItems))
+        {
+            if (item == null)
+            {
+                continue;
+            }
+            var output = new JsonObject();
+            AddIdentifier(output, "id", item.Id, "line_items.id");
+            AddIdentifier(output, "product_id", item.ProductId, "line_items.product_id");
+            output["quantity"] = item.Quantity;
+            result.Add(output);
+        }
+        if (items.Count > MaxCollectionItems)
+        {
+            _sanitizer.MarkTruncated("line_items");
+        }
+        _input["line_items"] = result;
+        _input["line_item_count"] = items.Count;
+    }
+
+    private void AddMcpBuyerPresence(IDictionary<string, JsonElement> arguments)
+    {
+        JsonElement? buyer = arguments.TryGetValue("buyer", out var buyerValue) ? buyerValue : null;
+        var buyerId = buyer is { ValueKind: JsonValueKind.Object } ? GetJsonString(buyer.Value, "id") : null;
+        var value = new JsonObject();
+        value["id_present"] = !string.IsNullOrWhiteSpace(buyerId);
+        value["email_present"] = IsMcpValuePresent(arguments, "buyer_email") || IsJsonPropertyPresent(buyer, "email");
+        value["name_present"] = IsMcpValuePresent(arguments, "buyer_name") || IsJsonPropertyPresent(buyer, "name");
+        value["phone_present"] = IsMcpValuePresent(arguments, "buyer_phone") || IsJsonPropertyPresent(buyer, "phone");
+        if (value.Count > 0)
+        {
+            _input["buyer_fields"] = value;
+        }
+    }
+
+    private void AddBuyerPresence(UcpCheckoutBuyer buyer, string emailAlias, string nameAlias, string phoneAlias)
+    {
+        if (buyer == null && emailAlias == null && nameAlias == null && phoneAlias == null)
+        {
+            return;
+        }
+
+        var value = new JsonObject();
+        value["id_present"] = !string.IsNullOrWhiteSpace(buyer?.Id);
+        value["email_present"] = !string.IsNullOrWhiteSpace(FirstNotEmpty(emailAlias, buyer?.Email));
+        value["name_present"] = !string.IsNullOrWhiteSpace(FirstNotEmpty(nameAlias, buyer?.Name));
+        value["phone_present"] = !string.IsNullOrWhiteSpace(FirstNotEmpty(phoneAlias, buyer?.Phone));
+        _input["buyer_fields"] = value;
+    }
+
+    private void AddMcpAddressPresence(IDictionary<string, JsonElement> arguments, string name)
+    {
+        if (!arguments.TryGetValue(name, out var address) || address.ValueKind != JsonValueKind.Object)
+        {
+            return;
+        }
+
+        var value = new JsonObject
+        {
+            ["present"] = true,
+            ["first_name_present"] = IsJsonPropertyPresent(address, "first_name"),
+            ["last_name_present"] = IsJsonPropertyPresent(address, "last_name"),
+            ["line1_present"] = IsJsonPropertyPresent(address, "line1"),
+            ["city_present"] = IsJsonPropertyPresent(address, "city"),
+            ["postal_code_present"] = IsJsonPropertyPresent(address, "postal_code"),
+            ["phone_present"] = IsJsonPropertyPresent(address, "phone"),
+            ["email_present"] = IsJsonPropertyPresent(address, "email"),
+        };
+        AddIdentifier(value, "id", GetJsonString(address, "id"), $"{name}.id");
+        AddIdentifier(value, "country_code", GetJsonString(address, "country_code"), $"{name}.country_code");
+        AddIdentifier(value, "region_id", GetJsonString(address, "region_id"), $"{name}.region_id");
+        _input[name] = value;
+    }
+
+    private void AddAddressPresence(string name, UcpCheckoutAddress address)
+    {
+        if (address == null)
+        {
+            return;
+        }
+
+        var value = new JsonObject
+        {
+            ["present"] = true,
+            ["first_name_present"] = !string.IsNullOrWhiteSpace(address.FirstName),
+            ["last_name_present"] = !string.IsNullOrWhiteSpace(address.LastName),
+            ["line1_present"] = !string.IsNullOrWhiteSpace(address.Line1),
+            ["city_present"] = !string.IsNullOrWhiteSpace(address.City),
+            ["postal_code_present"] = !string.IsNullOrWhiteSpace(address.PostalCode),
+            ["phone_present"] = !string.IsNullOrWhiteSpace(address.Phone),
+            ["email_present"] = !string.IsNullOrWhiteSpace(address.Email),
+        };
+        AddIdentifier(value, "id", address.Id, $"{name}.id");
+        AddIdentifier(value, "country_code", address.CountryCode, $"{name}.country_code");
+        AddIdentifier(value, "region_id", address.RegionId, $"{name}.region_id");
+        _input[name] = value;
+    }
+
+    private void AddSensitivePresence(string name, string value)
+    {
+        _input[$"{name}_present"] = !string.IsNullOrWhiteSpace(value);
+        _input[$"{name}_length"] = value?.Length ?? 0;
+    }
+
+    private void AddMcpCollectionCount(IDictionary<string, JsonElement> arguments, string sourceName, string targetName)
+    {
+        if (arguments.TryGetValue(sourceName, out var value) && value.ValueKind == JsonValueKind.Array)
+        {
+            _input[targetName] = value.GetArrayLength();
+        }
+    }
+
+    private void AddMcpFingerprint(IDictionary<string, JsonElement> arguments, string sourceName, string targetName)
+    {
+        AddFingerprint(_input, targetName, GetMcpString(arguments, sourceName), targetName);
+    }
+
+    private void AddFingerprint(JsonObject target, string name, string value, string field)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return;
+        }
+        target[$"{name}_length"] = value.Length;
+        target[$"{name}_fingerprint"] = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(value);
+    }
+
+    private void AddIdentifierArray(JsonObject target, string name, IEnumerable<string> values, string field)
+    {
+        if (values == null)
+        {
+            return;
+        }
+
+        var source = values.ToList();
+        var array = new JsonArray();
+        foreach (var value in source.Take(MaxSummaryItems))
+        {
+            var sanitized = _sanitizer.Sanitize(value, MaxIdentifierLength, field);
+            if (sanitized != null)
+            {
+                array.Add(sanitized);
+            }
+        }
+        if (source.Count > MaxSummaryItems)
+        {
+            _sanitizer.MarkTruncated(field);
+        }
+        target[name] = array;
+    }
+
+    private string ResolveStoreSource()
+    {
+        if (string.IsNullOrWhiteSpace(EffectiveStoreId))
+        {
+            return "not_applicable";
+        }
+        if (string.IsNullOrWhiteSpace(RequestedStoreId))
+        {
+            return "defaulted";
+        }
+        return string.Equals(RequestedStoreId, EffectiveStoreId, StringComparison.OrdinalIgnoreCase) ? "explicit" : "resolved";
+    }
+
+    private void AddIdentifier(JsonObject target, string name, string value, string field)
+    {
+        var sanitized = _sanitizer.Sanitize(value, MaxIdentifierLength, field);
+        if (sanitized != null)
+        {
+            target[name] = sanitized;
+        }
+    }
+
+    private void AddText(JsonObject target, string name, string value, string field)
+    {
+        var sanitized = _sanitizer.Sanitize(value, MaxTextLength, field);
+        if (sanitized != null)
+        {
+            target[name] = sanitized;
+        }
+    }
+
+    private static void AddNumber(JsonObject target, string name, long? value)
+    {
+        if (value.HasValue)
+        {
+            target[name] = value.Value;
+        }
+    }
+
+    private void AddMcpIdentifier(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)
+    {
+        AddIdentifier(target, targetName, GetMcpString(source, sourceName), targetName);
+    }
+
+    private void AddMcpText(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)
+    {
+        AddText(target, targetName, GetMcpString(source, sourceName), targetName);
+    }
+
+    private static void AddMcpNumber(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)
+    {
+        if (source.TryGetValue(sourceName, out var value))
+        {
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
+            {
+                target[targetName] = number;
+            }
+            else if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+            {
+                target[targetName] = number;
+            }
+        }
+    }
+
+    private static string GetMcpString(IDictionary<string, JsonElement> arguments, string name)
+    {
+        if (!arguments.TryGetValue(name, out var value) || value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+    }
+
+    private static string GetJsonString(JsonElement value, string name)
+    {
+        return value.TryGetProperty(name, out var property) && property.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
+            ? property.ValueKind == JsonValueKind.String ? property.GetString() : property.GetRawText()
+            : null;
+    }
+
+    private static bool IsMcpValuePresent(IDictionary<string, JsonElement> arguments, string name)
+    {
+        return arguments.TryGetValue(name, out var value) && value.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined &&
+            (value.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(value.GetString()));
+    }
+
+    private static bool IsJsonPropertyPresent(JsonElement? value, string name)
+    {
+        return value is { ValueKind: JsonValueKind.Object } && IsJsonPropertyPresent(value.Value, name);
+    }
+
+    private static bool IsJsonPropertyPresent(JsonElement value, string name)
+    {
+        return value.TryGetProperty(name, out var property) && property.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined &&
+            (property.ValueKind != JsonValueKind.String || !string.IsNullOrWhiteSpace(property.GetString()));
+    }
+
+    private static T GetArgument<T>(IDictionary<string, object> arguments, string name)
+        where T : class
+    {
+        return arguments.TryGetValue(name, out var value) ? value as T : null;
+    }
+
+    private static string GetArgumentString(IDictionary<string, object> arguments, string name)
+    {
+        return arguments.TryGetValue(name, out var value) ? Convert.ToString(value, CultureInfo.InvariantCulture) : null;
+    }
+
+    private static int? GetArgumentNullableInt(IDictionary<string, object> arguments, string name)
+    {
+        if (!arguments.TryGetValue(name, out var value) || value == null)
+        {
+            return null;
+        }
+        return value is int number ? number : int.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out number) ? number : null;
+    }
+
+    private static string FirstNotEmpty(params string[] values)
+    {
+        return values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    }
+}

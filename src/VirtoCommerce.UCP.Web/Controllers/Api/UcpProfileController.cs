@@ -2,8 +2,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
+using VirtoCommerce.UCP.Web.Filters;
 
 namespace VirtoCommerce.UCP.Web.Controllers.Api;
 
@@ -19,6 +21,7 @@ public class UcpProfileController : ControllerBase
 
     [HttpGet]
     [Route("/.well-known/ucp")]
+    [UcpOperation(ModuleConstants.Operations.GetStoreCapabilities)]
     [ProducesResponseType(typeof(UcpDiscoveryDocument), StatusCodes.Status200OK)]
     public async Task<ActionResult<UcpDiscoveryDocument>> GetProfile(CancellationToken cancellationToken)
     {

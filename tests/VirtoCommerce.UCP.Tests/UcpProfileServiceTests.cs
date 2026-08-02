@@ -5,11 +5,11 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
+using VirtoCommerce.StoreModule.Core.Model;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Data.Services;
-using VirtoCommerce.StoreModule.Core.Model;
 using Xunit;
 
 namespace VirtoCommerce.UCP.Tests;
@@ -81,7 +81,8 @@ public class UcpProfileServiceTests
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.ResolveCountry && x.Status == "available");
         Assert.Contains(profile.Endpoints.Operations, x => x.Name == ModuleConstants.McpTools.ListRegions && x.Status == "available" && x.Description.Contains("City remains free text", System.StringComparison.Ordinal));
         Assert.Equal(ModuleConstants.Headers.CorrelationId, profile.Headers.CorrelationId);
-        Assert.Contains(ModuleConstants.ErrorCodes.XApiExecutionFailed, profile.Errors.Codes);
+        Assert.Equal(ModuleConstants.Headers.TraceId, profile.Headers.TraceId);
+        Assert.Contains(ModuleConstants.ErrorCodes.XApiInvalidResponse, profile.Errors.Codes);
         Assert.Contains(ModuleConstants.ErrorCodes.OrderNotFound, profile.Errors.Codes);
         Assert.DoesNotContain(profile.Endpoints.Operations, x => x.Path?.Contains("api_key") == true);
 

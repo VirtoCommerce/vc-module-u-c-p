@@ -6,7 +6,6 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
@@ -42,6 +41,8 @@ public class UcpMcpCommerceToolsTests
         Assert.Contains(ModuleConstants.McpTools.ResolveCountry, toolNames);
         Assert.Contains(ModuleConstants.McpTools.ListRegions, toolNames);
         Assert.Contains(ModuleConstants.McpTools.TrackOrder, toolNames);
+        Assert.Equal(16, toolNames.Length);
+        Assert.All(toolNames, toolName => Assert.True(ModuleConstants.McpTools.IsUcpTool(toolName)));
         Assert.DoesNotContain("get_ucp_autodiscovery", toolNames);
     }
 
@@ -236,32 +237,30 @@ public class UcpMcpCommerceToolsTests
     }
 
     [Fact]
-    public async Task ListCarts_MissingBuyerId_ThrowsMcpToolError()
+    public async Task ListCarts_MissingBuyerId_ThrowsUcpExceptionForTransportFilter()
     {
-        var exception = await Assert.ThrowsAsync<McpException>(() => UcpMcpCommerceTools.ListCarts(
+        var exception = await Assert.ThrowsAsync<UcpException>(() => UcpMcpCommerceTools.ListCarts(
             null,
             null,
             buyer_id: null,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("\"is_error\":true", exception.Message);
-        Assert.Contains("\"code\":\"invalid_request\"", exception.Message);
-        Assert.Contains("\"status_code\":400", exception.Message);
-        Assert.Contains("\"message\":\"buyer_id is required to list carts.\"", exception.Message);
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Equal(400, exception.StatusCode);
+        Assert.Equal("buyer_id is required to list carts.", exception.Message);
     }
 
     [Fact]
-    public async Task GetProduct_InvalidRequest_ThrowsMcpToolError()
+    public async Task GetProduct_InvalidRequest_ThrowsUcpExceptionForTransportFilter()
     {
-        var exception = await Assert.ThrowsAsync<McpException>(() => UcpMcpCommerceTools.GetProduct(
+        var exception = await Assert.ThrowsAsync<UcpException>(() => UcpMcpCommerceTools.GetProduct(
             null,
             null,
             cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Contains("\"is_error\":true", exception.Message);
-        Assert.Contains("\"code\":\"invalid_request\"", exception.Message);
-        Assert.Contains("\"status_code\":400", exception.Message);
-        Assert.Contains("\"message\":\"id is required.\"", exception.Message);
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Equal(400, exception.StatusCode);
+        Assert.Equal("id is required.", exception.Message);
     }
 
     [Fact]

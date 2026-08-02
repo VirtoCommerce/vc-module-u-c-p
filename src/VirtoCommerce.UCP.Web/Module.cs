@@ -1,22 +1,25 @@
 using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
 using GraphQL.MicrosoftDI;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Trace;
+using Swashbuckle.AspNetCore.SwaggerGen;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
 using VirtoCommerce.Platform.Core.Settings;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Services;
 using VirtoCommerce.UCP.ExperienceApi;
+using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Filters;
 using VirtoCommerce.UCP.Web.Mcp;
 using VirtoCommerce.UCP.Web.Services;
+using VirtoCommerce.UCP.Web.Swagger;
 using VirtoCommerce.Xapi.Core.Extensions;
 using VirtoCommerce.Xapi.Core.Infrastructure;
 
@@ -34,7 +37,17 @@ public class Module : IModule, IHasConfiguration
         serviceCollection.Configure<UcpOptions>(Configuration.GetSection("UCP"));
         serviceCollection.Configure<MvcOptions>(options =>
         {
+            options.Filters.Add<UcpOperationResourceFilter>();
             options.Filters.Add<UcpExceptionFilter>();
+        });
+        serviceCollection.Configure<SwaggerGenOptions>(options =>
+            options.OperationFilter<UcpXApiResponseOperationFilter>());
+        serviceCollection.AddScoped<UcpOperationTelemetry>();
+        serviceCollection.AddScoped<UcpMcpCallToolFilter>();
+        serviceCollection.ConfigureOpenTelemetryTracerProvider(tracing =>
+        {
+            tracing.AddSource(UcpDiagnostics.ActivitySourceName);
+            tracing.AddSource(UcpDiagnostics.McpActivitySourceName);
         });
         serviceCollection
             .AddMcpServer(options =>
@@ -50,7 +63,16 @@ public class Module : IModule, IHasConfiguration
             {
                 options.Stateless = true;
             })
-            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, CreateMcpToolSerializerOptions());
+            .WithToolsFromAssembly(typeof(UcpMcpCommerceTools).Assembly, CreateMcpToolSerializerOptions())
+            .WithMessageFilters(filters =>
+            {
+                filters.AddIncomingFilter(UcpMcpActivityStatusFilter.Create());
+            })
+            .WithRequestFilters(filters =>
+            {
+                filters.AddCallToolFilter(next => (context, cancellationToken) =>
+                    context.Services.GetRequiredService<UcpMcpCallToolFilter>().InvokeAsync(next, context, cancellationToken));
+            });
 
         serviceCollection.AddTransient<IUcpProfileService, UcpProfileService>();
         serviceCollection.AddTransient<IUcpCatalogService, UcpCatalogService>();
@@ -70,13 +92,7 @@ public class Module : IModule, IHasConfiguration
 
     private static JsonSerializerOptions CreateMcpToolSerializerOptions()
     {
-        return new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
-            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-            NumberHandling = JsonNumberHandling.AllowReadingFromString,
-            TypeInfoResolver = new DefaultJsonTypeInfoResolver(),
-        };
+        return UcpMcpSerialization.Options;
     }
 
     public void PostInitialize(IApplicationBuilder appBuilder)

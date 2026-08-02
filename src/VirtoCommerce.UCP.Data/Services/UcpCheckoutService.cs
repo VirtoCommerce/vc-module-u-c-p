@@ -9,13 +9,14 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Options;
+using VirtoCommerce.Platform.Core.Common;
+using VirtoCommerce.StoreModule.Core.Services;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Models;
-using VirtoCommerce.Platform.Core.Common;
-using VirtoCommerce.StoreModule.Core.Services;
 
 namespace VirtoCommerce.UCP.Data.Services;
 
@@ -159,20 +160,38 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "ucp_session is required.");
         }
 
-        CheckoutHandoffTokenPayload payload;
-        try
-        {
-            var payloadJson = await _distributedCache.GetStringAsync(GetHandoffSessionCacheKey(request.UcpSession), cancellationToken);
-            payload = string.IsNullOrWhiteSpace(payloadJson)
-                ? null
-                : JsonSerializer.Deserialize<CheckoutHandoffTokenPayload>(payloadJson, JsonOptions);
-        }
-        catch (JsonException)
-        {
-            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "ucp_session is invalid or expired.");
-        }
+        var cacheResult = await UcpDiagnostics.ExecuteDependency(
+            "cache",
+            "distributed-cache",
+            "GetHandoffSession",
+            async () =>
+            {
+                var payloadJson = await _distributedCache.GetStringAsync(GetHandoffSessionCacheKey(request.UcpSession), cancellationToken);
+                if (string.IsNullOrWhiteSpace(payloadJson))
+                {
+                    return (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "miss");
+                }
 
-        if (payload == null || payload.ExpiresAt <= DateTimeOffset.UtcNow)
+                CheckoutHandoffTokenPayload payload;
+                try
+                {
+                    payload = JsonSerializer.Deserialize<CheckoutHandoffTokenPayload>(payloadJson, JsonOptions);
+                }
+                catch (JsonException)
+                {
+                    return (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "corrupt");
+                }
+
+                return payload == null
+                    ? (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "corrupt")
+                    : payload.ExpiresAt <= DateTimeOffset.UtcNow
+                        ? (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "expired")
+                        : (Payload: payload, Outcome: "hit");
+            },
+            result => result.Outcome);
+
+        var payload = cacheResult.Payload;
+        if (payload == null)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "ucp_session is invalid or expired.");
         }
@@ -216,7 +235,10 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "cart_id is required.");
         }
 
-        var response = await _cartService.GetCart(cartId, new UcpCartRequest { Context = context }, cancellationToken);
+        var response = await _cartService.GetCart(
+            cartId,
+            new UcpCartRequest { Context = context },
+            cancellationToken);
         if (response.Cart.LineItems.Count == 0)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "Checkout requires a non-empty cart.");
@@ -234,7 +256,10 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
 
         var response = request.ShippingAddress != null || request.BillingAddress != null
             ? await _cartService.ApplyCheckoutData(request.CartId, request, cancellationToken)
-            : await _cartService.GetCart(request.CartId, new UcpCartRequest { Context = request.Context }, cancellationToken);
+            : await _cartService.GetCart(
+                request.CartId,
+                new UcpCartRequest { Context = request.Context },
+                cancellationToken);
 
         if (response.Cart.LineItems.Count == 0)
         {
@@ -464,14 +489,18 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
             ExpiresAt = expiresAt,
         };
 
-        await _distributedCache.SetStringAsync(
-            GetHandoffSessionCacheKey(sessionToken),
-            JsonSerializer.Serialize(payload, JsonOptions),
-            new DistributedCacheEntryOptions
-            {
-                AbsoluteExpiration = expiresAt,
-            },
-            cancellationToken);
+        await UcpDiagnostics.ExecuteDependency(
+            "cache",
+            "distributed-cache",
+            "SetHandoffSession",
+            () => _distributedCache.SetStringAsync(
+                GetHandoffSessionCacheKey(sessionToken),
+                JsonSerializer.Serialize(payload, JsonOptions),
+                new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpiration = expiresAt,
+                },
+                cancellationToken));
 
         return sessionToken;
     }
@@ -501,7 +530,10 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
     {
         if (_storeService != null && !string.IsNullOrWhiteSpace(storeId))
         {
-            var store = await _storeService.GetNoCloneAsync(storeId);
+            var store = await UcpDiagnostics.ExecuteDependency(
+                "stores",
+                "GetStore",
+                () => _storeService.GetNoCloneAsync(storeId));
             var storeUrl = FirstNotEmpty(store?.SecureUrl, store?.Url);
 
             if (!string.IsNullOrWhiteSpace(storeUrl))
