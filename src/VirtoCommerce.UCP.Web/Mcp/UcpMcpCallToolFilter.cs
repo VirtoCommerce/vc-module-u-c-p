@@ -2,6 +2,7 @@ using System;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -57,7 +58,7 @@ public sealed class UcpMcpCallToolFilter
         }
         catch (UcpException exception)
         {
-            if (exception.StatusCode >= 500)
+            if (exception.StatusCode >= StatusCodes.Status500InternalServerError)
             {
                 _operationTelemetry.MarkError(exception, exception.Code);
                 _logger.LogError(

@@ -23,7 +23,7 @@ public class UcpOperationInputContractTests
     private const string SecretCoupon = "SAVE50-SECRET";
     private const string SecretSession = "SESSION-TOKEN-SECRET";
 
-    public static IEnumerable<object[]> McpCases()
+    private static IEnumerable<McpInputCase> McpCases()
     {
         yield return Mcp(ModuleConstants.Operations.GetStoreCapabilities, new Dictionary<string, JsonElement>(), null);
         yield return Mcp(ModuleConstants.Operations.SearchProducts, Args(("query", "microwave-marker"), ("store_id", "store-marker"), ("price_min", 1000), ("limit", 10)), "microwave-marker");
@@ -43,7 +43,7 @@ public class UcpOperationInputContractTests
         yield return Mcp(ModuleConstants.Operations.ListRegions, Args(("country_id", "country-marker")), "country-marker");
     }
 
-    public static IEnumerable<object[]> RestCases()
+    private static IEnumerable<RestInputCase> RestCases()
     {
         yield return Rest(ModuleConstants.Operations.GetStoreCapabilities, new Dictionary<string, object>(), null);
         yield return Rest(ModuleConstants.Operations.SearchProducts, new Dictionary<string, object>()
@@ -66,20 +66,30 @@ public class UcpOperationInputContractTests
         yield return Rest(ModuleConstants.Operations.ListRegions, new Dictionary<string, object> { ["countryId"] = "country-marker" }, "country-marker");
     }
 
-    [Theory]
-    [MemberData(nameof(McpCases))]
-    public void McpInputContract_CoversEveryToolWithoutSensitiveValues(string operation, IDictionary<string, JsonElement> arguments, string expectedMarker)
+    [Fact]
+    public void McpInputContract_CoversEveryToolWithoutSensitiveValues()
     {
-        var inputJson = Execute(operation, telemetry => telemetry.CaptureMcpArguments(arguments));
-        AssertInput(inputJson, expectedMarker);
+        var cases = McpCases().ToList();
+
+        Assert.NotEmpty(cases);
+        foreach (var testCase in cases)
+        {
+            var inputJson = Execute(testCase.Operation, telemetry => telemetry.CaptureMcpArguments(testCase.Arguments));
+            AssertInput(inputJson, testCase.ExpectedMarker);
+        }
     }
 
-    [Theory]
-    [MemberData(nameof(RestCases))]
-    public void RestInputContract_CoversEveryActionWithoutSensitiveValues(string operation, IDictionary<string, object> arguments, string expectedMarker)
+    [Fact]
+    public void RestInputContract_CoversEveryActionWithoutSensitiveValues()
     {
-        var inputJson = Execute(operation, telemetry => telemetry.CaptureRestArguments(arguments));
-        AssertInput(inputJson, expectedMarker);
+        var cases = RestCases().ToList();
+
+        Assert.NotEmpty(cases);
+        foreach (var testCase in cases)
+        {
+            var inputJson = Execute(testCase.Operation, telemetry => telemetry.CaptureRestArguments(testCase.Arguments));
+            AssertInput(inputJson, testCase.ExpectedMarker);
+        }
     }
 
     [Fact]
@@ -87,8 +97,8 @@ public class UcpOperationInputContractTests
     {
         Assert.Equal(16, McpCases().Count());
         Assert.Equal(16, RestCases().Count());
-        Assert.Contains(RestCases(), x => (string)x[0] == ModuleConstants.Operations.RestoreHandoff);
-        Assert.DoesNotContain(McpCases(), x => (string)x[0] == ModuleConstants.Operations.RestoreHandoff);
+        Assert.Contains(RestCases(), x => x.Operation == ModuleConstants.Operations.RestoreHandoff);
+        Assert.DoesNotContain(McpCases(), x => x.Operation == ModuleConstants.Operations.RestoreHandoff);
     }
 
     [Fact]
@@ -241,8 +251,21 @@ public class UcpOperationInputContractTests
         Assert.DoesNotContain(SecretSession, inputJson, StringComparison.Ordinal);
     }
 
-    private static object[] Mcp(string operation, IDictionary<string, JsonElement> args, string marker) => [operation, args, marker];
-    private static object[] Rest(string operation, IDictionary<string, object> args, string marker) => [operation, args, marker];
+    private static McpInputCase Mcp(
+        string operation,
+        IDictionary<string, JsonElement> args,
+        string marker)
+    {
+        return new McpInputCase(operation, args, marker);
+    }
+
+    private static RestInputCase Rest(
+        string operation,
+        IDictionary<string, object> args,
+        string marker)
+    {
+        return new RestInputCase(operation, args, marker);
+    }
 
     private static Dictionary<string, JsonElement> Args(params (string Name, object Value)[] values)
     {
@@ -305,7 +328,7 @@ public class UcpOperationInputContractTests
 
     private sealed class CaptureLogger : ILogger<UcpOperationTelemetry>
     {
-        public IList<IReadOnlyDictionary<string, object>> Entries { get; } = new List<IReadOnlyDictionary<string, object>>();
+        public List<IReadOnlyDictionary<string, object>> Entries { get; } = [];
 
         public IDisposable BeginScope<TState>(TState state) where TState : notnull => Scope.Instance;
         public bool IsEnabled(LogLevel logLevel) => true;
@@ -316,6 +339,16 @@ public class UcpOperationInputContractTests
                 ?? new Dictionary<string, object>());
         }
     }
+
+    private sealed record McpInputCase(
+        string Operation,
+        IDictionary<string, JsonElement> Arguments,
+        string ExpectedMarker);
+
+    private sealed record RestInputCase(
+        string Operation,
+        IDictionary<string, object> Arguments,
+        string ExpectedMarker);
 
     private sealed class Scope : IDisposable
     {

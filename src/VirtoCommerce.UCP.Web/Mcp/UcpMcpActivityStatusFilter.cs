@@ -35,14 +35,16 @@ public static class UcpMcpActivityStatusFilter
 
     private static bool IsUcpToolCall(JsonRpcMessage message)
     {
-        return message is JsonRpcRequest
+        if (message is not JsonRpcRequest { Method: RequestMethods.ToolsCall, Params: JsonObject parameters })
         {
-            Method: RequestMethods.ToolsCall,
-            Params: JsonObject parameters,
-        } &&
-            parameters.TryGetPropertyValue("name", out var nameNode) &&
-            nameNode is JsonValue nameValue &&
-            nameValue.TryGetValue<string>(out var name) &&
-            ModuleConstants.McpTools.IsUcpTool(name);
+            return false;
+        }
+
+        if (!parameters.TryGetPropertyValue("name", out var nameNode) || nameNode is not JsonValue nameValue)
+        {
+            return false;
+        }
+
+        return nameValue.TryGetValue<string>(out var name) && ModuleConstants.McpTools.IsUcpTool(name);
     }
 }

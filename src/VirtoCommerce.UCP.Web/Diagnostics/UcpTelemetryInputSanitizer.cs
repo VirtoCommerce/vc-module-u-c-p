@@ -8,16 +8,9 @@ using System.Text.RegularExpressions;
 
 namespace VirtoCommerce.UCP.Web.Diagnostics;
 
-internal sealed class UcpTelemetryInputSanitizer
+internal sealed partial class UcpTelemetryInputSanitizer
 {
-    private static readonly Regex EmailPattern = new(
-        @"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
-
-    private static readonly Regex PhonePattern = new(
-        @"(?<!\w)(?:\+?\d[\d\s().\-]{5,}\d)(?!\w)",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
+    private const int FingerprintByteCount = 8;
     public const int MaxIdentifierLength = 128;
     public const int MaxTextLength = 256;
     public const int MaxNameLength = 64;
@@ -105,8 +98,8 @@ internal sealed class UcpTelemetryInputSanitizer
             return value;
         }
 
-        var result = EmailPattern.Replace(value, "[redacted-email]");
-        return PhonePattern.Replace(result, "[redacted-phone]");
+        var result = EmailPattern().Replace(value, "[redacted-email]");
+        return PhonePattern().Replace(result, "[redacted-phone]");
     }
 
     public static string ComputeFingerprint(string value)
@@ -116,7 +109,7 @@ internal sealed class UcpTelemetryInputSanitizer
             return null;
         }
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(value));
-        return Convert.ToHexString(hash.AsSpan(0, 8)).ToLowerInvariant();
+        return Convert.ToHexString(hash.AsSpan(0, FingerprintByteCount)).ToLowerInvariant();
     }
 
     public static string JoinNames(IEnumerable<string> names, int maxItems = MaxSummaryItems)
@@ -171,4 +164,14 @@ internal sealed class UcpTelemetryInputSanitizer
                 break;
         }
     }
+
+    [GeneratedRegex(
+        @"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
+    private static partial Regex EmailPattern();
+
+    [GeneratedRegex(
+        @"(?<!\w)(?:\+?\d[\d\s().\-]{5,}\d)(?!\w)",
+        RegexOptions.CultureInvariant)]
+    private static partial Regex PhonePattern();
 }

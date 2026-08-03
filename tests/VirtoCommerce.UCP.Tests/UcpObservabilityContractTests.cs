@@ -712,8 +712,13 @@ public class UcpObservabilityContractTests
             serviceProvider,
             NullLogger<UcpApplicationInsightsActivityBridge>.Instance);
 
-        await listener.StartAsync(TestContext.Current.CancellationToken);
-        await listener.StopAsync(TestContext.Current.CancellationToken);
+        var exception = await Record.ExceptionAsync(async () =>
+        {
+            await listener.StartAsync(TestContext.Current.CancellationToken);
+            await listener.StopAsync(TestContext.Current.CancellationToken);
+        });
+
+        Assert.Null(exception);
     }
 
     private static ActivityListener CreateActivityListener(

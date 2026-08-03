@@ -289,12 +289,12 @@ public class XApiInProcessExecutorTests
         private readonly GraphQlExceptionLogState _logState = new();
 
         private TestableXApiInProcessExecutor()
-            : base(null, null, null, null, null, null, null, null)
+            : base(new XApiDocumentExecuters(null, null, null), null, null, null, null, null)
         {
         }
 
         public TestableXApiInProcessExecutor(ILogger<XApiInProcessExecutor> logger)
-            : base(null, null, null, null, null, null, null, logger)
+            : base(new XApiDocumentExecuters(null, null, null), null, null, null, null, logger)
         {
         }
 
@@ -313,15 +313,18 @@ public class XApiInProcessExecutorTests
             IDictionary<string, object> variables = null,
             string schemaVersion = "3.1015.0+test")
         {
-            return HandleUnhandledGraphQlException(
-                context,
+            var telemetry = new GraphQlExceptionTelemetryContext(
                 activity,
                 schema,
                 operationName,
                 callIndex,
                 variables,
                 schemaVersion,
-                _logState,
+                _logState);
+
+            return HandleUnhandledGraphQlException(
+                context,
+                telemetry,
                 existingHandler);
         }
     }

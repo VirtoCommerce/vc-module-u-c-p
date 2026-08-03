@@ -182,11 +182,14 @@ public class UcpCheckoutService : UcpServiceBase, IUcpCheckoutService
                     return (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "corrupt");
                 }
 
-                return payload == null
-                    ? (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "corrupt")
-                    : payload.ExpiresAt <= DateTimeOffset.UtcNow
-                        ? (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "expired")
-                        : (Payload: payload, Outcome: "hit");
+                if (payload == null)
+                {
+                    return (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "corrupt");
+                }
+
+                return payload.ExpiresAt <= DateTimeOffset.UtcNow
+                    ? (Payload: (CheckoutHandoffTokenPayload)null, Outcome: "expired")
+                    : (Payload: payload, Outcome: "hit");
             },
             result => result.Outcome);
 

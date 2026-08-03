@@ -194,43 +194,66 @@ public sealed class UcpOperationTelemetry
 
     private void SetTerminalActivityData(string inputJson)
     {
-        if (_activity == null)
+        var activity = _activity;
+        if (activity == null)
         {
             return;
         }
 
-        _activity.SetTag("vc.ucp.outcome", _outcome);
-        _activity.SetTag("vc.xapi.call.count", _xApiCallCount);
-        _activity.SetTag("vc.xapi.failed_call.count", _xApiFailedCallCount);
-        _activity.SetTag("vc.xapi.graphql.error.count", _xApiGraphQlErrorCount);
-        _activity.SetTag("vc.xapi.canceled_call.count", _xApiCanceledCallCount);
-        _activity.SetTag("vc.xapi.mutation.call.count", _xApiMutationCallCount);
-        _activity.SetTag("vc.xapi.mutation.failed_call.count", _xApiMutationFailedCallCount);
-        _activity.SetTag("vc.ucp.input.capture_mode", _inputCaptureMode.ToString());
-        _activity.SetTag("vc.ucp.input_json", inputJson);
-        if (inputJson != null)
+        SetTerminalCounters(activity);
+        SetTerminalInput(activity, inputJson);
+        SetTerminalError(activity);
+        SetRequestActivityData();
+        SetTerminalStatus(activity);
+    }
+
+    private void SetTerminalCounters(Activity activity)
+    {
+        activity.SetTag("vc.ucp.outcome", _outcome);
+        activity.SetTag("vc.xapi.call.count", _xApiCallCount);
+        activity.SetTag("vc.xapi.failed_call.count", _xApiFailedCallCount);
+        activity.SetTag("vc.xapi.graphql.error.count", _xApiGraphQlErrorCount);
+        activity.SetTag("vc.xapi.canceled_call.count", _xApiCanceledCallCount);
+        activity.SetTag("vc.xapi.mutation.call.count", _xApiMutationCallCount);
+        activity.SetTag("vc.xapi.mutation.failed_call.count", _xApiMutationFailedCallCount);
+    }
+
+    private void SetTerminalInput(Activity activity, string inputJson)
+    {
+        activity.SetTag("vc.ucp.input.capture_mode", _inputCaptureMode.ToString());
+        activity.SetTag("vc.ucp.input_json", inputJson);
+        if (inputJson == null)
         {
-            _activity.SetTag("vc.ucp.input.truncated", _input?.InputTruncated ?? false);
-            _activity.SetTag("vc.ucp.input.truncated_fields", _input?.TruncatedFields);
-            _activity.SetTag("vc.ucp.input.query", _input?.DiagnosticQuery);
-            if (string.Equals(_operation, ModuleConstants.Operations.SearchProducts, StringComparison.Ordinal))
-            {
-                _activity.SetTag("vc.catalog.search.query", _input?.DiagnosticQuery);
-            }
+            return;
         }
+
+        activity.SetTag("vc.ucp.input.truncated", _input.InputTruncated);
+        activity.SetTag("vc.ucp.input.truncated_fields", _input.TruncatedFields);
+        activity.SetTag("vc.ucp.input.query", _input.DiagnosticQuery);
+        if (string.Equals(_operation, ModuleConstants.Operations.SearchProducts, StringComparison.Ordinal))
+        {
+            activity.SetTag("vc.catalog.search.query", _input.DiagnosticQuery);
+        }
+    }
+
+    private void SetTerminalError(Activity activity)
+    {
         if (!string.IsNullOrWhiteSpace(_errorType))
         {
-            _activity.SetTag("error.type", _errorType);
+            activity.SetTag("error.type", _errorType);
         }
+
         if (!string.IsNullOrWhiteSpace(_errorCode))
         {
-            _activity.SetTag("vc.error.code", _errorCode);
+            activity.SetTag("vc.error.code", _errorCode);
         }
-        SetRequestActivityData();
+    }
 
+    private void SetTerminalStatus(Activity activity)
+    {
         if (_outcome == "error")
         {
-            _activity.SetStatus(ActivityStatusCode.Error, "UCP operation failed");
+            activity.SetStatus(ActivityStatusCode.Error, "UCP operation failed");
         }
     }
 
@@ -270,26 +293,21 @@ public sealed class UcpOperationTelemetry
             "xapi_mutation_failed_call_count:{XApiMutationFailedCallCount} search_query_length:{SearchQueryLength} " +
             "search_query_hash:{SearchQueryHash} error_type:{ErrorType} error_code:{ErrorCode} trace_id:{TraceId} span_id:{SpanId}";
 
+        var input = new OperationInputLogValues(_input);
         var values = new object[]
         {
             "ucp.operation.completed", 1, _operation, _transport, UcpDiagnostics.ModuleVersion,
             _outcome, _stopwatch.ElapsedMilliseconds,
-            _inputCaptureMode.ToString(), inputJson, _input?.InputTruncated ?? false, _input?.TruncatedFields,
-            _input?.ArgumentNames, _xApiVariableNames, _input?.RequestedStoreId,
-            _input?.EffectiveStoreId, _input?.StoreSource, _input?.EffectiveCurrency, _input?.EffectiveCulture,
+            _inputCaptureMode.ToString(), inputJson, input.InputTruncated, input.TruncatedFields,
+            input.ArgumentNames, _xApiVariableNames, input.RequestedStoreId,
+            input.EffectiveStoreId, input.StoreSource, input.EffectiveCurrency, input.EffectiveCulture,
             _xApiCallCount, _xApiFailedCallCount, _xApiGraphQlErrorCount, _xApiCanceledCallCount,
             _xApiMutationCallCount, _xApiMutationFailedCallCount,
             _searchQueryLength, _searchQueryHash, _errorType, _errorCode, _traceId, _spanId,
         };
 
-        if (_outcome == "error")
-        {
-            _logger.Log(LogLevel.Error, OperationCompletedEvent, message, values);
-        }
-        else
-        {
-            _logger.Log(LogLevel.Information, OperationCompletedEvent, message, values);
-        }
+        var logLevel = _outcome == "error" ? LogLevel.Error : LogLevel.Information;
+        _logger.Log(logLevel, OperationCompletedEvent, message, values);
     }
 
     private bool ShouldWriteInput()
@@ -310,5 +328,34 @@ public sealed class UcpOperationTelemetry
             UcpInputCaptureMode.ErrorsOnly => failed,
             _ => true,
         };
+    }
+
+    private sealed class OperationInputLogValues
+    {
+        public OperationInputLogValues(UcpOperationInputCapture input)
+        {
+            if (input == null)
+            {
+                return;
+            }
+
+            InputTruncated = input.InputTruncated;
+            TruncatedFields = input.TruncatedFields;
+            ArgumentNames = input.ArgumentNames;
+            RequestedStoreId = input.RequestedStoreId;
+            EffectiveStoreId = input.EffectiveStoreId;
+            StoreSource = input.StoreSource;
+            EffectiveCurrency = input.EffectiveCurrency;
+            EffectiveCulture = input.EffectiveCulture;
+        }
+
+        public bool InputTruncated { get; }
+        public string TruncatedFields { get; }
+        public string ArgumentNames { get; }
+        public string RequestedStoreId { get; }
+        public string EffectiveStoreId { get; }
+        public string StoreSource { get; }
+        public string EffectiveCurrency { get; }
+        public string EffectiveCulture { get; }
     }
 }

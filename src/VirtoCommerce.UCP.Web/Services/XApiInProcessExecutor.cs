@@ -19,20 +19,20 @@ using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.Xapi.Core.Infrastructure;
-using XCartDataAssemblyMarker = VirtoCommerce.XCart.Data.DataAssemblyMarker;
-using XCatalogDataAssemblyMarker = VirtoCommerce.XCatalog.Data.DataAssemblyMarker;
-using XOrderDataAssemblyMarker = VirtoCommerce.XOrder.Data.DataAssemblyMarker;
 
 namespace VirtoCommerce.UCP.Web.Services;
 
 public class XApiInProcessExecutor : IXApiInProcessExecutor
 {
     private const int MaxLoggedGraphQlExceptions = 5;
+    private const int MaxGraphQlErrorItems = 5;
+    private const int MaxGraphQlErrorValueLength = 128;
+    private const int MaxGraphQlErrorMessageLength = 256;
+    private const int MaxGraphQlPathSegments = 10;
+    private const int MaxGraphQlPathLength = 256;
     private static readonly EventId GraphQlResolverExceptionEvent = new(2001, "XApiGraphQlResolverException");
 
-    private readonly IDocumentExecuter<ScopedSchemaFactory<XCatalogDataAssemblyMarker>> _catalogDocumentExecuter;
-    private readonly IDocumentExecuter<ScopedSchemaFactory<XCartDataAssemblyMarker>> _cartDocumentExecuter;
-    private readonly IDocumentExecuter<ScopedSchemaFactory<XOrderDataAssemblyMarker>> _orderDocumentExecuter;
+    private readonly XApiDocumentExecuters _documentExecuters;
     private readonly IGraphQLTextSerializer _graphQlSerializer;
     private readonly IServiceProvider _serviceProvider;
     private readonly IHttpContextAccessor _httpContextAccessor;
@@ -40,18 +40,14 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private readonly ILogger<XApiInProcessExecutor> _logger;
 
     public XApiInProcessExecutor(
-        IDocumentExecuter<ScopedSchemaFactory<XCatalogDataAssemblyMarker>> catalogDocumentExecuter,
-        IDocumentExecuter<ScopedSchemaFactory<XCartDataAssemblyMarker>> cartDocumentExecuter,
-        IDocumentExecuter<ScopedSchemaFactory<XOrderDataAssemblyMarker>> orderDocumentExecuter,
+        XApiDocumentExecuters documentExecuters,
         IGraphQLTextSerializer graphQlSerializer,
         IServiceProvider serviceProvider,
         IHttpContextAccessor httpContextAccessor,
         UcpOperationTelemetry operationTelemetry,
         ILogger<XApiInProcessExecutor> logger)
     {
-        _catalogDocumentExecuter = catalogDocumentExecuter;
-        _cartDocumentExecuter = cartDocumentExecuter;
-        _orderDocumentExecuter = orderDocumentExecuter;
+        _documentExecuters = documentExecuters;
         _graphQlSerializer = graphQlSerializer;
         _serviceProvider = serviceProvider;
         _httpContextAccessor = httpContextAccessor;
@@ -61,17 +57,17 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
 
     public virtual Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return Execute(_catalogDocumentExecuter, "XCatalog", request, cancellationToken);
+        return Execute(_documentExecuters.Catalog, "XCatalog", request, cancellationToken);
     }
 
     public virtual Task<XApiExecutionResult> ExecuteCart(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return Execute(_cartDocumentExecuter, "XCart", request, cancellationToken);
+        return Execute(_documentExecuters.Cart, "XCart", request, cancellationToken);
     }
 
     public virtual Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
     {
-        return Execute(_orderDocumentExecuter, "XOrder", request, cancellationToken);
+        return Execute(_documentExecuters.Order, "XOrder", request, cancellationToken);
     }
 
     protected virtual Task<XApiExecutionResult> Execute<TSchemaFactory>(
@@ -94,94 +90,162 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         CancellationToken cancellationToken)
         where TSchemaFactory : ISchema
     {
-        var operationName = string.IsNullOrWhiteSpace(request.OperationName) ? "anonymous" : request.OperationName;
-        var operationType = GetOperationType(request.Query, request.OperationName);
-        var isMutation = operationType == "mutation";
-        var errorCount = 0;
-        var completed = false;
-        var canceled = false;
-        var callIndex = _operationTelemetry.BeginXApiCall(isMutation);
-        var exceptionLogState = new GraphQlExceptionLogState();
-        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(request.Variables);
-        var schemaVersion = GetSchemaVersion<TSchemaFactory>();
-        _operationTelemetry.CaptureXApiRequest(requestSnapshot);
-        using var activity = UcpDiagnostics.StartXApi(schema, operationName, operationType, callIndex);
-        requestSnapshot.Enrich(activity);
-        activity?.SetTag("vc.xapi.schema.version", schemaVersion);
-
-        var httpContext = _httpContextAccessor.HttpContext;
-        var originalContentType = httpContext?.Request.ContentType;
-        if (httpContext != null && httpContext.Request.ContentType == null)
-        {
-            httpContext.Request.ContentType = "application/json";
-        }
+        var call = CreateCallContext<TSchemaFactory>(schema, request);
+        using var activity = call.Activity;
+        var contentType = SetJsonContentType();
 
         try
         {
-            var executionResult = await documentExecuter.ExecuteAsync(options =>
-            {
-                options.Query = request.Query;
-                options.OperationName = request.OperationName;
-                options.UserContext = new GraphQLUserContext(request.User);
-                options.Variables = new Inputs(request.Variables ?? new Dictionary<string, object>());
-                options.RequestServices = _serviceProvider;
-                options.CancellationToken = cancellationToken;
-                var existingUnhandledExceptionDelegate = options.UnhandledExceptionDelegate;
-                options.UnhandledExceptionDelegate = context => HandleUnhandledGraphQlException(
-                    context,
-                    activity,
-                    schema,
-                    operationName,
-                    callIndex,
-                    request.Variables,
-                    schemaVersion,
-                    exceptionLogState,
-                    existingUnhandledExceptionDelegate);
-            });
-
-            errorCount = executionResult.Errors?.Count ?? 0;
-            if (errorCount > 0)
-            {
-                SetGraphQlErrorData(activity, executionResult);
-            }
-
-            var json = _graphQlSerializer.Serialize(executionResult);
-            var result = new XApiExecutionResult
-            {
-                Succeeded = errorCount == 0,
-                Json = json,
-            };
-            completed = true;
-
-            return result;
+            var executionResult = await ExecuteDocument(documentExecuter, schema, request, call, cancellationToken);
+            return CreateExecutionResult(executionResult, call);
         }
         catch (OperationCanceledException)
         {
-            canceled = true;
-            activity?.SetTag("vc.xapi.outcome", "canceled");
+            MarkCanceled(call);
             throw;
         }
         catch (Exception exception)
         {
-            activity?.AddException(exception);
-            activity?.SetTag("error.type", exception.GetType().FullName);
-            activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+            RecordExecutionException(call.Activity, exception);
             throw;
         }
         finally
         {
-            if (httpContext != null)
-            {
-                httpContext.Request.ContentType = originalContentType;
-            }
-
-            var failed = !canceled && (errorCount > 0 || !completed);
-            if (_operationTelemetry.ShouldWriteXApiInput(failed))
-            {
-                requestSnapshot.EnrichInput(activity);
-            }
-            _operationTelemetry.CompleteXApiCall(isMutation, errorCount, completed, canceled);
+            RestoreContentType(contentType);
+            CompleteCallTelemetry(call);
         }
+    }
+
+    private XApiCallTelemetryContext CreateCallContext<TSchemaFactory>(string schema, XApiExecutionRequest request)
+        where TSchemaFactory : ISchema
+    {
+        var operationName = string.IsNullOrWhiteSpace(request.OperationName) ? "anonymous" : request.OperationName;
+        var operationType = GetOperationType(request.Query, request.OperationName);
+        var isMutation = operationType == "mutation";
+        var callIndex = _operationTelemetry.BeginXApiCall(isMutation);
+        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(request.Variables);
+        var schemaVersion = GetSchemaVersion<TSchemaFactory>();
+        _operationTelemetry.CaptureXApiRequest(requestSnapshot);
+        var activity = UcpDiagnostics.StartXApi(schema, operationName, operationType, callIndex);
+        requestSnapshot.Enrich(activity);
+        activity?.SetTag("vc.xapi.schema.version", schemaVersion);
+
+        return new XApiCallTelemetryContext(
+            operationName,
+            isMutation,
+            callIndex,
+            requestSnapshot,
+            schemaVersion,
+            activity);
+    }
+
+    private Task<ExecutionResult> ExecuteDocument<TSchemaFactory>(
+        IDocumentExecuter<TSchemaFactory> documentExecuter,
+        string schema,
+        XApiExecutionRequest request,
+        XApiCallTelemetryContext call,
+        CancellationToken cancellationToken)
+        where TSchemaFactory : ISchema
+    {
+        var exceptionTelemetry = new GraphQlExceptionTelemetryContext(
+            call.Activity,
+            schema,
+            call.OperationName,
+            call.CallIndex,
+            request.Variables,
+            call.SchemaVersion,
+            call.ExceptionLogState);
+
+        return documentExecuter.ExecuteAsync(options =>
+        {
+            options.Query = request.Query;
+            options.OperationName = request.OperationName;
+            options.UserContext = new GraphQLUserContext(request.User);
+            options.Variables = new Inputs(request.Variables ?? new Dictionary<string, object>());
+            options.RequestServices = _serviceProvider;
+            options.CancellationToken = cancellationToken;
+            var existingHandler = options.UnhandledExceptionDelegate;
+            options.UnhandledExceptionDelegate = context => HandleUnhandledGraphQlException(
+                context,
+                exceptionTelemetry,
+                existingHandler);
+        });
+    }
+
+    private XApiExecutionResult CreateExecutionResult(ExecutionResult executionResult, XApiCallTelemetryContext call)
+    {
+        call.ErrorCount = executionResult.Errors == null ? 0 : executionResult.Errors.Count;
+        if (call.ErrorCount > 0)
+        {
+            SetGraphQlErrorData(call.Activity, executionResult);
+        }
+
+        var result = new XApiExecutionResult
+        {
+            Succeeded = call.ErrorCount == 0,
+            Json = _graphQlSerializer.Serialize(executionResult),
+        };
+        call.Completed = true;
+
+        return result;
+    }
+
+    private ContentTypeState SetJsonContentType()
+    {
+        var httpContext = _httpContextAccessor.HttpContext;
+        if (httpContext == null)
+        {
+            return new ContentTypeState(null, null);
+        }
+
+        var originalContentType = httpContext.Request.ContentType;
+        if (originalContentType == null)
+        {
+            httpContext.Request.ContentType = "application/json";
+        }
+
+        return new ContentTypeState(httpContext, originalContentType);
+    }
+
+    private static void RestoreContentType(ContentTypeState state)
+    {
+        if (state.HttpContext != null)
+        {
+            state.HttpContext.Request.ContentType = state.OriginalContentType;
+        }
+    }
+
+    private static void MarkCanceled(XApiCallTelemetryContext call)
+    {
+        call.Canceled = true;
+        call.Activity?.SetTag("vc.xapi.outcome", "canceled");
+    }
+
+    private static void RecordExecutionException(Activity activity, Exception exception)
+    {
+        if (activity == null)
+        {
+            return;
+        }
+
+        activity.AddException(exception);
+        activity.SetTag("error.type", exception.GetType().FullName);
+        activity.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+    }
+
+    private void CompleteCallTelemetry(XApiCallTelemetryContext call)
+    {
+        var failed = !call.Canceled && (call.ErrorCount > 0 || !call.Completed);
+        if (_operationTelemetry.ShouldWriteXApiInput(failed))
+        {
+            call.RequestSnapshot.EnrichInput(call.Activity);
+        }
+
+        _operationTelemetry.CompleteXApiCall(
+            call.IsMutation,
+            call.ErrorCount,
+            call.Completed,
+            call.Canceled);
     }
 
     protected static string GetOperationType(string query, string operationName)
@@ -228,60 +292,21 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         activity.SetTag("vc.xapi.error.count", executionResult.Errors.Count);
         activity.SetTag("vc.xapi.error.codes", JoinBounded(executionResult.Errors.Select(error => error.Code)));
         activity.SetTag("vc.xapi.error.paths", JoinBounded(executionResult.Errors.Select(error => error.Path == null ? null : string.Join('.', error.Path))));
-        activity.SetTag("vc.xapi.error.messages", JoinBounded(executionResult.Errors.Select(error => error.Message), 5, 256));
+        activity.SetTag(
+            "vc.xapi.error.messages",
+            JoinBounded(executionResult.Errors.Select(error => error.Message), MaxGraphQlErrorItems, MaxGraphQlErrorMessageLength));
         activity.SetStatus(ActivityStatusCode.Error, "GraphQL errors");
     }
 
     protected virtual async Task HandleUnhandledGraphQlException(
         GraphQL.Execution.UnhandledExceptionContext context,
-        Activity activity,
-        string schema,
-        string operationName,
-        int callIndex,
-        IDictionary<string, object> requestVariables,
-        string schemaVersion,
-        GraphQlExceptionLogState logState,
+        GraphQlExceptionTelemetryContext telemetry,
         Func<GraphQL.Execution.UnhandledExceptionContext, Task> existingHandler)
     {
         var exception = context.OriginalException;
-        if (exception != null && logState.ShouldLog(exception))
+        if (exception != null && telemetry.LogState.ShouldLog(exception))
         {
-            var requestSnapshot = XApiRequestTelemetrySnapshot.Create(requestVariables);
-            var path = context.FieldContext?.ResponsePath ?? context.FieldContext?.Path;
-            var errorPath = path == null ? null : GetBoundedPath(path);
-            var traceId = (activity ?? Activity.Current)?.TraceId.ToString();
-            var spanId = (activity ?? Activity.Current)?.SpanId.ToString();
-
-            activity?.SetTag("error.type", exception.GetType().FullName);
-            activity?.AddException(exception);
-
-            _logger.LogError(
-                GraphQlResolverExceptionEvent,
-                exception,
-                "event:{EventName} schema:{XApiSchema} operation:{XApiOperation} error_type:{XApiErrorType} " +
-                "error_path:{XApiErrorPath} call_index:{XApiCallIndex} schema_version:{XApiSchemaVersion} " +
-                "xapi_variables:{XApiVariableNames} store_id:{StoreId} currency:{CurrencyCode} culture:{CultureName} " +
-                "page_size:{PageSize} filter_present:{FilterPresent} xapi_input_json:{XApiInputJson} " +
-                "reference_type:{RequestReferenceType} reference_value:{RequestReferenceValue} " +
-                "trace_id:{TraceId} span_id:{SpanId}",
-                "XApiGraphQlException",
-                schema,
-                operationName,
-                exception.GetType().FullName,
-                errorPath,
-                callIndex,
-                schemaVersion,
-                requestSnapshot?.VariableNames,
-                requestSnapshot?.StoreId,
-                requestSnapshot?.CurrencyCode,
-                requestSnapshot?.CultureName,
-                requestSnapshot?.PageSize,
-                requestSnapshot?.FilterPresent,
-                requestSnapshot?.SafeInputJson,
-                requestSnapshot?.ReferenceType,
-                requestSnapshot?.ReferenceValue,
-                traceId,
-                spanId);
+            LogUnhandledGraphQlException(context, telemetry, exception);
         }
 
         if (existingHandler != null)
@@ -290,9 +315,75 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         }
     }
 
+    private void LogUnhandledGraphQlException(
+        GraphQL.Execution.UnhandledExceptionContext context,
+        GraphQlExceptionTelemetryContext telemetry,
+        Exception exception)
+    {
+        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(telemetry.RequestVariables);
+        var errorPath = GetErrorPath(context);
+        var (traceId, spanId) = GetTraceIdentifiers(telemetry.Activity);
+
+        if (telemetry.Activity != null)
+        {
+            telemetry.Activity.SetTag("error.type", exception.GetType().FullName);
+            telemetry.Activity.AddException(exception);
+        }
+
+        _logger.LogError(
+            GraphQlResolverExceptionEvent,
+            exception,
+            "event:{EventName} schema:{XApiSchema} operation:{XApiOperation} error_type:{XApiErrorType} " +
+            "error_path:{XApiErrorPath} call_index:{XApiCallIndex} schema_version:{XApiSchemaVersion} " +
+            "xapi_variables:{XApiVariableNames} store_id:{StoreId} currency:{CurrencyCode} culture:{CultureName} " +
+            "page_size:{PageSize} filter_present:{FilterPresent} xapi_input_json:{XApiInputJson} " +
+            "reference_type:{RequestReferenceType} reference_value:{RequestReferenceValue} " +
+            "trace_id:{TraceId} span_id:{SpanId}",
+            "XApiGraphQlException",
+            telemetry.Schema,
+            telemetry.OperationName,
+            exception.GetType().FullName,
+            errorPath,
+            telemetry.CallIndex,
+            telemetry.SchemaVersion,
+            requestSnapshot.VariableNames,
+            requestSnapshot.StoreId,
+            requestSnapshot.CurrencyCode,
+            requestSnapshot.CultureName,
+            requestSnapshot.PageSize,
+            requestSnapshot.FilterPresent,
+            requestSnapshot.SafeInputJson,
+            requestSnapshot.ReferenceType,
+            requestSnapshot.ReferenceValue,
+            traceId,
+            spanId);
+    }
+
+    private static string GetErrorPath(GraphQL.Execution.UnhandledExceptionContext context)
+    {
+        if (context.FieldContext == null)
+        {
+            return null;
+        }
+
+        var path = context.FieldContext.ResponsePath ?? context.FieldContext.Path;
+        return path == null ? null : GetBoundedPath(path);
+    }
+
+    private static (string TraceId, string SpanId) GetTraceIdentifiers(Activity activity)
+    {
+        var traceActivity = activity ?? Activity.Current;
+        if (traceActivity == null)
+        {
+            return (null, null);
+        }
+
+        return (traceActivity.TraceId.ToString(), traceActivity.SpanId.ToString());
+    }
+
     private static string JoinBounded(IEnumerable<string> values)
     {
-        return JoinBounded(values, 5, 128);
+        return JoinBounded(values, MaxGraphQlErrorItems, MaxGraphQlErrorValueLength);
     }
 
     private static string JoinBounded(IEnumerable<string> values, int maxItems, int maxValueLength)
@@ -306,8 +397,8 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
 
     private static string GetBoundedPath(IEnumerable<object> path)
     {
-        var value = string.Join('.', path.Take(10));
-        return value.Length > 256 ? value[..256] : value;
+        var value = string.Join('.', path.Take(MaxGraphQlPathSegments));
+        return value.Length > MaxGraphQlPathLength ? value[..MaxGraphQlPathLength] : value;
     }
 
     private static string GetSchemaVersion<TSchemaFactory>()
@@ -320,6 +411,77 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
 
         return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly?.GetName().Version?.ToString();
+    }
+
+    private sealed class XApiCallTelemetryContext
+    {
+        public XApiCallTelemetryContext(
+            string operationName,
+            bool isMutation,
+            int callIndex,
+            XApiRequestTelemetrySnapshot requestSnapshot,
+            string schemaVersion,
+            Activity activity)
+        {
+            OperationName = operationName;
+            IsMutation = isMutation;
+            CallIndex = callIndex;
+            RequestSnapshot = requestSnapshot;
+            SchemaVersion = schemaVersion;
+            Activity = activity;
+        }
+
+        public string OperationName { get; }
+        public bool IsMutation { get; }
+        public int CallIndex { get; }
+        public XApiRequestTelemetrySnapshot RequestSnapshot { get; }
+        public string SchemaVersion { get; }
+        public Activity Activity { get; }
+        public GraphQlExceptionLogState ExceptionLogState { get; } = new();
+        public int ErrorCount { get; set; }
+        public bool Completed { get; set; }
+        public bool Canceled { get; set; }
+    }
+
+    private sealed class ContentTypeState
+    {
+        public ContentTypeState(HttpContext httpContext, string originalContentType)
+        {
+            HttpContext = httpContext;
+            OriginalContentType = originalContentType;
+        }
+
+        public HttpContext HttpContext { get; }
+        public string OriginalContentType { get; }
+    }
+
+    protected sealed class GraphQlExceptionTelemetryContext
+    {
+        public GraphQlExceptionTelemetryContext(
+            Activity activity,
+            string schema,
+            string operationName,
+            int callIndex,
+            IDictionary<string, object> requestVariables,
+            string schemaVersion,
+            GraphQlExceptionLogState logState)
+        {
+            Activity = activity;
+            Schema = schema;
+            OperationName = operationName;
+            CallIndex = callIndex;
+            RequestVariables = requestVariables;
+            SchemaVersion = schemaVersion;
+            LogState = logState;
+        }
+
+        public Activity Activity { get; }
+        public string Schema { get; }
+        public string OperationName { get; }
+        public int CallIndex { get; }
+        public IDictionary<string, object> RequestVariables { get; }
+        public string SchemaVersion { get; }
+        public GraphQlExceptionLogState LogState { get; }
     }
 
     protected sealed class GraphQlExceptionLogState

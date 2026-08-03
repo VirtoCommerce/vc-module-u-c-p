@@ -133,6 +133,26 @@ public static class ModuleConstants
 
     public static class McpTools
     {
+        private static readonly HashSet<string> UcpToolNames =
+        [
+            GetStoreCapabilities,
+            SearchProducts,
+            GetProduct,
+            CreateCart,
+            ListCarts,
+            GetCart,
+            UpdateCart,
+            CreateCheckout,
+            UpdateCheckout,
+            CheckoutAndHandoff,
+            GetPaymentHandlers,
+            HandoffCheckout,
+            TrackOrder,
+            ListCountries,
+            ResolveCountry,
+            ListRegions,
+        ];
+
         public const string GetStoreCapabilities = Operations.GetStoreCapabilities;
         public const string SearchProducts = Operations.SearchProducts;
         public const string GetProduct = Operations.GetProduct;
@@ -152,22 +172,7 @@ public static class ModuleConstants
 
         public static bool IsUcpTool(string name)
         {
-            return name is GetStoreCapabilities
-                or SearchProducts
-                or GetProduct
-                or CreateCart
-                or ListCarts
-                or GetCart
-                or UpdateCart
-                or CreateCheckout
-                or UpdateCheckout
-                or CheckoutAndHandoff
-                or GetPaymentHandlers
-                or HandoffCheckout
-                or TrackOrder
-                or ListCountries
-                or ResolveCountry
-                or ListRegions;
+            return name != null && UcpToolNames.Contains(name);
         }
     }
 

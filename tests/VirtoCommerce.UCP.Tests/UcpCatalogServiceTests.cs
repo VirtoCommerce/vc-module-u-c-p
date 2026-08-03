@@ -254,7 +254,7 @@ public class UcpCatalogServiceTests
 
         Assert.Equal(ModuleConstants.ErrorCodes.XApiInvalidResponse, exception.Code);
         Assert.Equal(StatusCodes.Status500InternalServerError, exception.StatusCode);
-        Assert.IsAssignableFrom<JsonException>(exception.InnerException);
+        Assert.IsType<JsonException>(exception.InnerException, exactMatch: false);
     }
 
     [Fact]

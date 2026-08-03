@@ -129,39 +129,46 @@ public abstract class UcpServiceBase
                 exception);
         }
 
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        try
+        {
+            ValidateGraphQlResult(document, result, source);
+            return document;
+        }
+        catch
         {
             document.Dispose();
+            throw;
+        }
+    }
+
+    private void ValidateGraphQlResult(JsonDocument document, XApiExecutionResult result, string source)
+    {
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a non-object GraphQL response.", StatusCodes.Status500InternalServerError);
         }
 
         var hasErrorsProperty = document.RootElement.TryGetProperty("errors", out var errors);
         if (hasErrorsProperty && errors.ValueKind != JsonValueKind.Array)
         {
-            document.Dispose();
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an invalid GraphQL errors field.", StatusCodes.Status500InternalServerError);
         }
 
         var errorCount = hasErrorsProperty ? errors.GetArrayLength() : 0;
         if (errorCount > 0)
         {
-            document.Dispose();
             throw new XApiResponseException(source, result, errorCount);
         }
 
         if (!result.Succeeded)
         {
-            document.Dispose();
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} failed without a GraphQL error response.", StatusCodes.Status500InternalServerError);
         }
 
         if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
-            document.Dispose();
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a GraphQL response without object data.", StatusCodes.Status500InternalServerError);
         }
-
-        return document;
     }
 
     protected static string FirstNotEmpty(params string[] values)

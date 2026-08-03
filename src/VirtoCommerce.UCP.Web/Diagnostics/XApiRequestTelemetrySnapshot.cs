@@ -30,7 +30,7 @@ internal sealed class XApiRequestTelemetrySnapshot
     public string ProductId { get; private init; }
     public string LineItemId { get; private init; }
     public int? Quantity { get; private init; }
-    public string SafeInputJson { get; private init; }
+    public string SafeInputJson { get; private set; }
 
     public static XApiRequestTelemetrySnapshot Create(IDictionary<string, object> variables)
     {
@@ -48,7 +48,7 @@ internal sealed class XApiRequestTelemetrySnapshot
         var quantity = GetInt32(variables, "quantity") ?? GetInt32(command, "quantity");
         var (referenceType, referenceValue) = GetReference(variables, command, productId, lineItemId, cartId);
 
-        return new XApiRequestTelemetrySnapshot
+        var snapshot = new XApiRequestTelemetrySnapshot
         {
             VariableNames = UcpTelemetryInputSanitizer.JoinNames(variables.Keys, maxItems: 20),
             StoreId = UcpTelemetryInputSanitizer.SanitizeText(storeId),
@@ -67,27 +67,34 @@ internal sealed class XApiRequestTelemetrySnapshot
             ProductId = UcpTelemetryInputSanitizer.SanitizeText(productId),
             LineItemId = UcpTelemetryInputSanitizer.SanitizeText(lineItemId),
             Quantity = quantity,
-            SafeInputJson = BuildSafeInputJson(variables, command, storeId, currency, culture, cartId, productId, lineItemId, quantity),
         };
+        snapshot.SafeInputJson = BuildSafeInputJson(variables, command, snapshot);
+
+        return snapshot;
     }
 
     public void Enrich(Activity activity)
     {
-        activity?.SetTag("vc.xapi.variable.names", VariableNames);
-        activity?.SetTag("vc.store.id", StoreId);
-        activity?.SetTag("vc.currency.code", CurrencyCode);
-        activity?.SetTag("vc.culture.name", CultureName);
-        activity?.SetTag("vc.catalog.search.query.length", SearchQueryLength);
-        activity?.SetTag("vc.catalog.search.query.hash", SearchQueryHash);
-        activity?.SetTag("vc.catalog.filter.present", FilterPresent);
-        activity?.SetTag("vc.pagination.limit", PageSize);
-        activity?.SetTag("vc.xapi.input.reference.type", ReferenceType);
-        activity?.SetTag("vc.xapi.input.reference.value", ReferenceValue);
-        activity?.SetTag("vc.xapi.input.reference.hash", ReferenceHash);
-        activity?.SetTag("vc.xapi.input.cart_id", CartId);
-        activity?.SetTag("vc.xapi.input.product_id", ProductId);
-        activity?.SetTag("vc.xapi.input.line_item_id", LineItemId);
-        activity?.SetTag("vc.xapi.input.quantity", Quantity);
+        if (activity == null)
+        {
+            return;
+        }
+
+        activity.SetTag("vc.xapi.variable.names", VariableNames);
+        activity.SetTag("vc.store.id", StoreId);
+        activity.SetTag("vc.currency.code", CurrencyCode);
+        activity.SetTag("vc.culture.name", CultureName);
+        activity.SetTag("vc.catalog.search.query.length", SearchQueryLength);
+        activity.SetTag("vc.catalog.search.query.hash", SearchQueryHash);
+        activity.SetTag("vc.catalog.filter.present", FilterPresent);
+        activity.SetTag("vc.pagination.limit", PageSize);
+        activity.SetTag("vc.xapi.input.reference.type", ReferenceType);
+        activity.SetTag("vc.xapi.input.reference.value", ReferenceValue);
+        activity.SetTag("vc.xapi.input.reference.hash", ReferenceHash);
+        activity.SetTag("vc.xapi.input.cart_id", CartId);
+        activity.SetTag("vc.xapi.input.product_id", ProductId);
+        activity.SetTag("vc.xapi.input.line_item_id", LineItemId);
+        activity.SetTag("vc.xapi.input.quantity", Quantity);
     }
 
     public void EnrichInput(Activity activity)
@@ -100,22 +107,16 @@ internal sealed class XApiRequestTelemetrySnapshot
     private static string BuildSafeInputJson(
         IDictionary<string, object> variables,
         IDictionary<string, object> command,
-        string storeId,
-        string currency,
-        string culture,
-        string cartId,
-        string productId,
-        string lineItemId,
-        int? quantity)
+        XApiRequestTelemetrySnapshot snapshot)
     {
         var result = new JsonObject();
         var userId = FirstNotEmpty(GetString(variables, "userId"), GetString(command, "userId"));
-        Add(result, "store_id", storeId);
-        Add(result, "currency", currency);
-        Add(result, "culture", culture);
-        Add(result, "cart_id", cartId);
-        Add(result, "product_id", productId);
-        Add(result, "line_item_id", lineItemId);
+        Add(result, "store_id", snapshot.StoreId);
+        Add(result, "currency", snapshot.CurrencyCode);
+        Add(result, "culture", snapshot.CultureName);
+        Add(result, "cart_id", snapshot.CartId);
+        Add(result, "product_id", snapshot.ProductId);
+        Add(result, "line_item_id", snapshot.LineItemId);
         AddDiagnosticText(result, "query", GetString(variables, "query"));
         AddDiagnosticText(result, "filter", GetString(variables, "filter"));
         AddDiagnosticText(result, "sort", GetString(variables, "sort"));
@@ -132,9 +133,9 @@ internal sealed class XApiRequestTelemetrySnapshot
             result["cursor_present"] = true;
             result["cursor_fingerprint"] = UcpTelemetryInputSanitizer.ComputeFingerprint(cursor);
         }
-        if (quantity.HasValue)
+        if (snapshot.Quantity.HasValue)
         {
-            result["quantity"] = quantity.Value;
+            result["quantity"] = snapshot.Quantity.Value;
         }
         Add(result, "id", GetString(variables, "id"));
         Add(result, "order_id", GetString(variables, "orderId"));
@@ -165,7 +166,7 @@ internal sealed class XApiRequestTelemetrySnapshot
 
     private static void AddNestedCommandSummary(JsonObject result, string name, IDictionary<string, object> value, string addressName)
     {
-        if (value == null)
+        if (value == null || value.Count == 0)
         {
             return;
         }
@@ -177,7 +178,7 @@ internal sealed class XApiRequestTelemetrySnapshot
 
     private static void AddCommandAddressSummary(JsonObject result, string name, IDictionary<string, object> address)
     {
-        if (address == null)
+        if (address == null || address.Count == 0)
         {
             return;
         }
@@ -237,7 +238,7 @@ internal sealed class XApiRequestTelemetrySnapshot
     {
         if (source == null || !source.TryGetValue(name, out var value) || value == null)
         {
-            return null;
+            return new Dictionary<string, object>();
         }
         if (value is IDictionary<string, object> dictionary)
         {
@@ -249,7 +250,7 @@ internal sealed class XApiRequestTelemetrySnapshot
                 .Where(x => x.Key != null)
                 .ToDictionary(x => Convert.ToString(x.Key, CultureInfo.InvariantCulture), x => x.Value, StringComparer.Ordinal);
         }
-        return null;
+        return new Dictionary<string, object>();
     }
 
     private static string GetString(IDictionary<string, object> source, string name)

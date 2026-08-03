@@ -88,6 +88,7 @@ public class Module : IModule, IHasConfiguration
         serviceCollection.AddTransient<IUcpCheckoutService, UcpCheckoutService>();
         serviceCollection.AddTransient<IUcpOrderService, UcpOrderService>();
         serviceCollection.AddTransient<IUcpGeographyService, UcpGeographyService>();
+        serviceCollection.AddTransient<XApiDocumentExecuters>();
         serviceCollection.AddTransient<IXApiInProcessExecutor, XApiInProcessExecutor>();
 
         _ = new GraphQLBuilder(serviceCollection, builder =>

@@ -71,23 +71,32 @@ internal sealed class UcpOperationInputCapture
     {
         arguments ??= new Dictionary<string, JsonElement>();
         ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys);
+
+        if (!CaptureMcpCatalogAndCart(operation, arguments))
+        {
+            CaptureMcpCheckoutAndLookup(operation, arguments);
+        }
+    }
+
+    private bool CaptureMcpCatalogAndCart(string operation, IDictionary<string, JsonElement> arguments)
+    {
         switch (operation)
         {
             case ModuleConstants.Operations.GetStoreCapabilities:
-                break;
+                return true;
             case ModuleConstants.Operations.SearchProducts:
                 AddMcpQuery(arguments);
                 AddMcpCommerceContext(arguments);
                 AddMcpNumber(arguments, _input, "price_min", "price_min");
                 AddMcpNumber(arguments, _input, "price_max", "price_max");
                 AddMcpNumber(arguments, _input, "limit", "limit");
-                break;
+                return true;
             case ModuleConstants.Operations.GetProduct:
                 AddMcpIdentifier(arguments, _input, "id", "id");
                 AddMcpIdentifier(arguments, _input, "product_id", "product_id");
                 AddResolvedAlias(_input, "product", GetMcpString(arguments, "product_id"), "product_id", GetMcpString(arguments, "id"), "id");
                 AddMcpCommerceContext(arguments);
-                break;
+                return true;
             case ModuleConstants.Operations.CreateCart:
             case ModuleConstants.Operations.UpdateCart:
                 if (operation == ModuleConstants.Operations.UpdateCart)
@@ -97,17 +106,26 @@ internal sealed class UcpOperationInputCapture
                 AddMcpCartContext(arguments);
                 AddMcpLineItems(arguments);
                 AddMcpCollectionCount(arguments, "coupons", "coupon_count");
-                break;
+                return true;
             case ModuleConstants.Operations.ListCarts:
                 AddMcpCartContext(arguments);
                 AddMcpFingerprint(arguments, "cursor", "cursor");
                 AddMcpNumber(arguments, _input, "limit", "limit");
                 AddMcpText(arguments, _input, "sort", "sort");
-                break;
+                return true;
             case ModuleConstants.Operations.GetCart:
                 AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
                 AddMcpCartContext(arguments);
-                break;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void CaptureMcpCheckoutAndLookup(string operation, IDictionary<string, JsonElement> arguments)
+    {
+        switch (operation)
+        {
             case ModuleConstants.Operations.CreateCheckout:
             case ModuleConstants.Operations.CheckoutAndHandoff:
                 AddMcpIdentifier(arguments, _input, "cart_id", "cart_id");
@@ -147,30 +165,48 @@ internal sealed class UcpOperationInputCapture
     {
         arguments ??= new Dictionary<string, object>();
         ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys.Where(x => !string.Equals(x, "cancellationToken", StringComparison.OrdinalIgnoreCase)));
+
+        if (!CaptureRestCatalogAndCart(operation, arguments))
+        {
+            CaptureRestCheckoutAndLookup(operation, arguments);
+        }
+    }
+
+    private bool CaptureRestCatalogAndCart(string operation, IDictionary<string, object> arguments)
+    {
         switch (operation)
         {
             case ModuleConstants.Operations.GetStoreCapabilities:
-                break;
+                return true;
             case ModuleConstants.Operations.SearchProducts:
                 CaptureCatalogRequest(GetArgument<UcpCatalogSearchRequest>(arguments, "request"));
-                break;
+                return true;
             case ModuleConstants.Operations.GetProduct:
                 AddIdentifier(_input, "id", GetArgumentString(arguments, "id"), "id");
                 CaptureCatalogProductQuery(GetArgument<UcpCatalogProductQuery>(arguments, "query"));
-                break;
+                return true;
             case ModuleConstants.Operations.CreateCart:
                 CaptureCartRequest(GetArgument<UcpCartRequest>(arguments, "request"), null);
-                break;
+                return true;
             case ModuleConstants.Operations.ListCarts:
                 CaptureCartListQuery(GetArgument<UcpCartListQuery>(arguments, "query"));
-                break;
+                return true;
             case ModuleConstants.Operations.GetCart:
                 AddIdentifier(_input, "cart_id", GetArgumentString(arguments, "cartId"), "cart_id");
                 CaptureCartQuery(GetArgument<UcpCartQuery>(arguments, "query"));
-                break;
+                return true;
             case ModuleConstants.Operations.UpdateCart:
                 CaptureCartRequest(GetArgument<UcpCartRequest>(arguments, "request"), GetArgumentString(arguments, "cartId"));
-                break;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private void CaptureRestCheckoutAndLookup(string operation, IDictionary<string, object> arguments)
+    {
+        switch (operation)
+        {
             case ModuleConstants.Operations.CreateCheckout:
                 CaptureCheckoutRequest(GetArgument<UcpCheckoutRequest>(arguments, "request"), null);
                 break;
@@ -208,12 +244,33 @@ internal sealed class UcpOperationInputCapture
         }
 
         AddQuery(request.Query);
-        AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
+        CaptureCatalogCommerceContext(request);
+        CaptureCatalogPaging(request);
+        CaptureCatalogFilters(request);
+    }
+
+    private void CaptureCatalogCommerceContext(UcpCatalogSearchRequest request)
+    {
+        AddCommerceContext(
+            request.StoreId,
+            request.Context?.StoreId,
+            request.Currency,
+            request.Context?.Currency,
+            request.Language,
+            request.Context?.Language);
+    }
+
+    private void CaptureCatalogPaging(UcpCatalogSearchRequest request)
+    {
         AddNumber(_input, "limit", request.Limit ?? request.Pagination?.Limit);
+        AddFingerprint(_input, "cursor", request.Pagination?.Cursor);
+    }
+
+    private void CaptureCatalogFilters(UcpCatalogSearchRequest request)
+    {
         AddNumber(_input, "price_min", request.Filters?.Price?.Min);
         AddNumber(_input, "price_max", request.Filters?.Price?.Max);
         AddIdentifierArray(_input, "category_ids", request.Filters?.Categories, "category_ids");
-        AddFingerprint(_input, "cursor", request.Pagination?.Cursor, "cursor");
     }
 
     private void CaptureCatalogProductQuery(UcpCatalogProductQuery query)
@@ -236,13 +293,18 @@ internal sealed class UcpOperationInputCapture
             return;
         }
 
+        CaptureCartContexts(request);
+        AddLineItems(request.LineItems);
+        _input["coupon_count"] = request.Coupons?.Count ?? 0;
+    }
+
+    private void CaptureCartContexts(UcpCartRequest request)
+    {
         AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
         AddPrivateIdentifierPair("buyer", request.BuyerId, request.Context?.BuyerId);
         AddPrivateIdentifierPair("organization", request.OrganizationId, request.Context?.OrganizationId);
         AddPrivateIdentifierPair("cart_name", request.CartName, request.Context?.CartName);
         AddTextPair("cart_type", request.CartType, request.Context?.CartType);
-        AddLineItems(request.LineItems);
-        _input["coupon_count"] = request.Coupons?.Count ?? 0;
     }
 
     private void CaptureCartListQuery(UcpCartListQuery query)
@@ -256,7 +318,7 @@ internal sealed class UcpOperationInputCapture
         AddPrivateIdentifierPresence("buyer_id", query.BuyerId);
         AddPrivateIdentifierPresence("organization_id", query.OrganizationId);
         AddText(_input, "cart_type", query.CartType, "cart_type");
-        AddFingerprint(_input, "cursor", query.Cursor, "cursor");
+        AddFingerprint(_input, "cursor", query.Cursor);
         AddNumber(_input, "limit", query.Limit);
         AddText(_input, "sort", query.Sort, "sort");
     }
@@ -453,13 +515,22 @@ internal sealed class UcpOperationInputCapture
 
     private void AddLookupKind(string orderId, string orderNumber, string cartId)
     {
-        _input["lookup_kind"] = !string.IsNullOrWhiteSpace(orderId)
-            ? "order_id"
-            : !string.IsNullOrWhiteSpace(orderNumber)
-                ? "order_number"
-                : !string.IsNullOrWhiteSpace(cartId)
-                    ? "cart_id"
-                    : "missing";
+        if (!string.IsNullOrWhiteSpace(orderId))
+        {
+            _input["lookup_kind"] = "order_id";
+        }
+        else if (!string.IsNullOrWhiteSpace(orderNumber))
+        {
+            _input["lookup_kind"] = "order_number";
+        }
+        else if (!string.IsNullOrWhiteSpace(cartId))
+        {
+            _input["lookup_kind"] = "cart_id";
+        }
+        else
+        {
+            _input["lookup_kind"] = "missing";
+        }
     }
 
     private void AddMcpLineItems(IDictionary<string, JsonElement> arguments)
@@ -534,10 +605,7 @@ internal sealed class UcpOperationInputCapture
         value["email_present"] = IsMcpValuePresent(arguments, "buyer_email") || IsJsonPropertyPresent(buyer, "email");
         value["name_present"] = IsMcpValuePresent(arguments, "buyer_name") || IsJsonPropertyPresent(buyer, "name");
         value["phone_present"] = IsMcpValuePresent(arguments, "buyer_phone") || IsJsonPropertyPresent(buyer, "phone");
-        if (value.Count > 0)
-        {
-            _input["buyer_fields"] = value;
-        }
+        _input["buyer_fields"] = value;
     }
 
     private void AddBuyerPresence(UcpCheckoutBuyer buyer, string emailAlias, string nameAlias, string phoneAlias)
@@ -573,7 +641,7 @@ internal sealed class UcpOperationInputCapture
             ["phone_present"] = IsJsonPropertyPresent(address, "phone"),
             ["email_present"] = IsJsonPropertyPresent(address, "email"),
         };
-        AddFingerprint(value, "id", GetJsonString(address, "id"), $"{name}.id");
+        AddFingerprint(value, "id", GetJsonString(address, "id"));
         AddIdentifier(value, "country_code", GetJsonString(address, "country_code"), $"{name}.country_code");
         AddIdentifier(value, "region_id", GetJsonString(address, "region_id"), $"{name}.region_id");
         _input[name] = value;
@@ -597,7 +665,7 @@ internal sealed class UcpOperationInputCapture
             ["phone_present"] = !string.IsNullOrWhiteSpace(address.Phone),
             ["email_present"] = !string.IsNullOrWhiteSpace(address.Email),
         };
-        AddFingerprint(value, "id", address.Id, $"{name}.id");
+        AddFingerprint(value, "id", address.Id);
         AddIdentifier(value, "country_code", address.CountryCode, $"{name}.country_code");
         AddIdentifier(value, "region_id", address.RegionId, $"{name}.region_id");
         _input[name] = value;
@@ -619,10 +687,10 @@ internal sealed class UcpOperationInputCapture
 
     private void AddMcpFingerprint(IDictionary<string, JsonElement> arguments, string sourceName, string targetName)
     {
-        AddFingerprint(_input, targetName, GetMcpString(arguments, sourceName), targetName);
+        AddFingerprint(_input, targetName, GetMcpString(arguments, sourceName));
     }
 
-    private void AddFingerprint(JsonObject target, string name, string value, string field)
+    private static void AddFingerprint(JsonObject target, string name, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -723,17 +791,31 @@ internal sealed class UcpOperationInputCapture
 
     private static void AddMcpNumber(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)
     {
-        if (source.TryGetValue(sourceName, out var value))
+        if (!source.TryGetValue(sourceName, out var value))
         {
-            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number))
-            {
-                target[targetName] = number;
-            }
-            else if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
-            {
-                target[targetName] = number;
-            }
+            return;
         }
+
+        if (TryGetMcpNumber(value, out var number))
+        {
+            target[targetName] = number;
+        }
+    }
+
+    private static bool TryGetMcpNumber(JsonElement value, out long number)
+    {
+        if (value.ValueKind == JsonValueKind.Number)
+        {
+            return value.TryGetInt64(out number);
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            return long.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number);
+        }
+
+        number = default;
+        return false;
     }
 
     private static string GetMcpString(IDictionary<string, JsonElement> arguments, string name)
@@ -747,9 +829,12 @@ internal sealed class UcpOperationInputCapture
 
     private static string GetJsonString(JsonElement value, string name)
     {
-        return value.TryGetProperty(name, out var property) && property.ValueKind is not JsonValueKind.Null and not JsonValueKind.Undefined
-            ? property.ValueKind == JsonValueKind.String ? property.GetString() : property.GetRawText()
-            : null;
+        if (!value.TryGetProperty(name, out var property) || property.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        return property.ValueKind == JsonValueKind.String ? property.GetString() : property.GetRawText();
     }
 
     private static bool IsMcpValuePresent(IDictionary<string, JsonElement> arguments, string name)
@@ -786,7 +871,12 @@ internal sealed class UcpOperationInputCapture
         {
             return null;
         }
-        return value is int number ? number : int.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out number) ? number : null;
+        if (value is int number)
+        {
+            return number;
+        }
+
+        return int.TryParse(Convert.ToString(value, CultureInfo.InvariantCulture), out number) ? number : null;
     }
 
     private static string FirstNotEmpty(params string[] values)

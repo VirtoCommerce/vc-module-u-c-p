@@ -8,10 +8,8 @@ using VirtoCommerce.UCP.Web.Mcp.Models;
 
 namespace VirtoCommerce.UCP.Web.Mcp;
 
-internal static class UcpMcpErrorResultFactory
+internal static partial class UcpMcpErrorResultFactory
 {
-    private static readonly Regex SafeErrorCodeRegex = new("^[a-z0-9_-]{1,64}$", RegexOptions.CultureInvariant);
-
     public static CallToolResult FromXApi(XApiResponseException exception)
     {
         using var document = JsonDocument.Parse(exception.Result.Json);
@@ -42,7 +40,7 @@ internal static class UcpMcpErrorResultFactory
             Message = exception.Message,
         };
         var structuredContent = JsonSerializer.SerializeToElement(error, UcpMcpSerialization.Options);
-        var safeCode = SafeErrorCodeRegex.IsMatch(exception.Code ?? string.Empty) ? exception.Code : "ucp_error";
+        var safeCode = SafeErrorCodePattern().IsMatch(exception.Code ?? string.Empty) ? exception.Code : "ucp_error";
         return new CallToolResult
         {
             IsError = true,
@@ -86,4 +84,7 @@ internal static class UcpMcpErrorResultFactory
             },
         };
     }
+
+    [GeneratedRegex("^[a-z0-9_-]{1,64}$", RegexOptions.CultureInvariant)]
+    private static partial Regex SafeErrorCodePattern();
 }

@@ -53,7 +53,7 @@ public class UcpExceptionFilter : IExceptionFilter
             return;
         }
 
-        if (exception.StatusCode >= 500)
+        if (exception.StatusCode >= StatusCodes.Status500InternalServerError)
         {
             _operationTelemetry.MarkError(nameof(UcpException), exception.Code);
             _logger.LogError(

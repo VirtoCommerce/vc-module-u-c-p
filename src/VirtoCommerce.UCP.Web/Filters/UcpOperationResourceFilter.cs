@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using VirtoCommerce.UCP.Core;
@@ -11,6 +12,7 @@ namespace VirtoCommerce.UCP.Web.Filters;
 
 public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncActionFilter, IOrderedFilter
 {
+    private const int TelemetryFilterOrder = -3000;
     private readonly UcpOperationTelemetry _operationTelemetry;
 
     public UcpOperationResourceFilter(UcpOperationTelemetry operationTelemetry)
@@ -18,7 +20,7 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
         _operationTelemetry = operationTelemetry;
     }
 
-    public int Order => -3000;
+    public int Order => TelemetryFilterOrder;
 
     public async Task OnResourceExecutionAsync(ResourceExecutingContext context, ResourceExecutionDelegate next)
     {
@@ -42,11 +44,11 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
             {
                 MarkException(executedContext.Exception);
             }
-            else if (context.HttpContext.Response.StatusCode >= 500)
+            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError)
             {
                 _operationTelemetry.MarkError("HttpResponse", $"http_{context.HttpContext.Response.StatusCode}");
             }
-            else if (context.HttpContext.Response.StatusCode >= 400)
+            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status400BadRequest)
             {
                 _operationTelemetry.MarkRejected($"http_{context.HttpContext.Response.StatusCode}");
             }
@@ -86,7 +88,7 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
             case XApiResponseException:
                 _operationTelemetry.MarkError(nameof(XApiResponseException), "xapi_graphql_error");
                 break;
-            case UcpException ucpException when ucpException.StatusCode < 500:
+            case UcpException ucpException when ucpException.StatusCode < StatusCodes.Status500InternalServerError:
                 _operationTelemetry.MarkRejected(ucpException.Code);
                 break;
             case UcpException ucpException:
