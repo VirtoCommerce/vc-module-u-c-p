@@ -4,11 +4,20 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace VirtoCommerce.UCP.Web.Diagnostics;
 
-internal sealed class UcpTelemetrySnapshotSanitizer
+internal sealed class UcpTelemetryInputSanitizer
 {
+    private static readonly Regex EmailPattern = new(
+        @"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex PhonePattern = new(
+        @"(?<!\w)(?:\+?\d[\d\s().\-]{5,}\d)(?!\w)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
     public const int MaxIdentifierLength = 128;
     public const int MaxTextLength = 256;
     public const int MaxNameLength = 64;
@@ -87,6 +96,17 @@ internal sealed class UcpTelemetrySnapshotSanitizer
             result.Append(char.IsControl(character) ? ' ' : character);
         }
         return result.ToString();
+    }
+
+    public static string RedactPotentialPii(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+
+        var result = EmailPattern.Replace(value, "[redacted-email]");
+        return PhonePattern.Replace(result, "[redacted-phone]");
     }
 
     public static string ComputeFingerprint(string value)

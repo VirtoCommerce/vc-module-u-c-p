@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenTelemetry.Trace;
+using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
@@ -51,7 +52,7 @@ public sealed class UcpOperationTelemetry
     public UcpOperationTelemetry(ILogger<UcpOperationTelemetry> logger, IOptions<UcpOptions> options)
     {
         _logger = logger;
-        _inputCaptureMode = options?.Value?.Observability?.InputCaptureMode ?? UcpInputCaptureMode.Always;
+        _inputCaptureMode = options?.Value?.Observability?.InputCaptureMode ?? UcpInputCaptureMode.ErrorsOnly;
     }
 
     public string TraceId => _traceId;
@@ -184,13 +185,14 @@ public sealed class UcpOperationTelemetry
 
         _stopwatch.Stop();
         _outcome ??= "success";
-        SetTerminalActivityData();
-        WriteTerminalLog();
+        var inputJson = ShouldWriteInput() ? _input?.GetInputJson() : null;
+        SetTerminalActivityData(inputJson);
+        WriteTerminalLog(inputJson);
         _activity?.Dispose();
         _activity = null;
     }
 
-    private void SetTerminalActivityData()
+    private void SetTerminalActivityData(string inputJson)
     {
         if (_activity == null)
         {
@@ -204,6 +206,18 @@ public sealed class UcpOperationTelemetry
         _activity.SetTag("vc.xapi.canceled_call.count", _xApiCanceledCallCount);
         _activity.SetTag("vc.xapi.mutation.call.count", _xApiMutationCallCount);
         _activity.SetTag("vc.xapi.mutation.failed_call.count", _xApiMutationFailedCallCount);
+        _activity.SetTag("vc.ucp.input.capture_mode", _inputCaptureMode.ToString());
+        _activity.SetTag("vc.ucp.input_json", inputJson);
+        if (inputJson != null)
+        {
+            _activity.SetTag("vc.ucp.input.truncated", _input?.InputTruncated ?? false);
+            _activity.SetTag("vc.ucp.input.truncated_fields", _input?.TruncatedFields);
+            _activity.SetTag("vc.ucp.input.query", _input?.DiagnosticQuery);
+            if (string.Equals(_operation, ModuleConstants.Operations.SearchProducts, StringComparison.Ordinal))
+            {
+                _activity.SetTag("vc.catalog.search.query", _input?.DiagnosticQuery);
+            }
+        }
         if (!string.IsNullOrWhiteSpace(_errorType))
         {
             _activity.SetTag("error.type", _errorType);
@@ -241,7 +255,7 @@ public sealed class UcpOperationTelemetry
         _activity.SetTag("vc.ucp.request.reference.hash", _referenceHash);
     }
 
-    private void WriteTerminalLog()
+    private void WriteTerminalLog(string inputJson)
     {
         const string message =
             "event:{EventName} schema_version:{TelemetrySchemaVersion} operation:{UcpOperation} transport:{UcpTransport} " +
@@ -256,7 +270,6 @@ public sealed class UcpOperationTelemetry
             "xapi_mutation_failed_call_count:{XApiMutationFailedCallCount} search_query_length:{SearchQueryLength} " +
             "search_query_hash:{SearchQueryHash} error_type:{ErrorType} error_code:{ErrorCode} trace_id:{TraceId} span_id:{SpanId}";
 
-        var inputJson = ShouldWriteInput() ? _input?.GetInputJson() : null;
         var values = new object[]
         {
             "ucp.operation.completed", 1, _operation, _transport, UcpDiagnostics.ModuleVersion,
@@ -285,6 +298,16 @@ public sealed class UcpOperationTelemetry
         {
             UcpInputCaptureMode.None => false,
             UcpInputCaptureMode.ErrorsOnly => _outcome is "error" or "rejected" or "degraded",
+            _ => true,
+        };
+    }
+
+    internal bool ShouldWriteXApiInput(bool failed)
+    {
+        return _inputCaptureMode switch
+        {
+            UcpInputCaptureMode.None => false,
+            UcpInputCaptureMode.ErrorsOnly => failed,
             _ => true,
         };
     }

@@ -145,7 +145,8 @@ Configuration is read from the `UCP` section:
     "HandoffTokenTtlMinutes": 15,
     "AnonymousCatalog": true,
     "Observability": {
-      "InputCaptureMode": "Always"
+      "InputCaptureMode": "ErrorsOnly",
+      "EnableApplicationInsightsCompatibilityBridge": true
     }
   }
 }
@@ -161,7 +162,8 @@ Configuration is read from the `UCP` section:
 | `UCP:HandoffUrlTemplate` | String | — | Explicit override for the hosted checkout handoff URL. `{token}` is replaced with the `ucp_session` token. |
 | `UCP:HandoffTokenTtlMinutes` | Integer | `15` | Absolute expiration of temporary checkout handoff sessions in the distributed cache. |
 | `UCP:AnonymousCatalog` | Boolean | `true` | Allows anonymous catalog search and product detail requests. |
-| `UCP:Observability:InputCaptureMode` | Enum | `Always` | Controls the bounded allowlisted operation input in the terminal log: `None`, `ErrorsOnly`, or `Always`. Trace tags and counters remain enabled in every mode. |
+| `UCP:Observability:InputCaptureMode` | Enum | `ErrorsOnly` | Controls the bounded allowlisted operation input in logs and span attributes: `None`, `ErrorsOnly`, or `Always`. Trace correlation, safe context attributes, and counters remain enabled in every mode. |
+| `UCP:Observability:EnableApplicationInsightsCompatibilityBridge` | Boolean | `true` | Exports UCP activities through the classic Virto Commerce Application Insights module. Disable it when OpenTelemetry already exports the same traces to the target Application Insights resource. |
 
 If `DefaultStoreId` is not configured, discovery reads open stores from the Store module. If one store is found, `/.well-known/ucp` returns it as `default_store_id`, `store`, and the only `stores[]` item. If multiple stores are found, discovery returns them in `stores[]` and the client must choose a store explicitly.
 
@@ -496,11 +498,11 @@ MCP/REST request
       └─ existing SQL, Elastic, HTTP, cache, and other dependency spans
 ```
 
-Each actual in-process XAPI execution gets its own span. UCP does not configure an exporter, endpoint, sampler, service resource, Serilog sink, or minimum logging level; those remain controlled by Platform and the installed observability module.
+Each actual in-process XAPI execution gets its own span. UCP does not create an OpenTelemetry provider or configure an OTLP exporter, endpoint, sampler, service resource, Serilog sink, or minimum logging level; those remain controlled by Platform and the installed observability module. When the classic Virto Commerce Application Insights module is installed, UCP can additionally use a small compatibility bridge to export these activities as correlated dependencies.
 
 Each UCP operation writes one structured terminal log: `Information` for success/rejection/cancellation and `Error` for failures. The log contains outcome, duration, XAPI call/failed/canceled/GraphQL-error counts, factual XAPI mutation attempt/failed counts, and trace/span ids. It does not infer transaction commit state or retry safety.
 
-The terminal event has stable `EventId=2000`, `EventName=ucp.operation.completed`, and schema version `1`. Its `InputJson` is an operation-specific allowlist rather than a serialized request body. It retains values needed to reproduce a call (for example search text, requested/effective store, currency, culture, product/cart/order identifiers, line item identifiers and quantities) and reports truncation explicitly. UCP response bodies and output snapshots are not copied into telemetry; successful-result semantics are verified by reproducing the captured input under a debugger.
+The terminal event has stable `EventId=2000`, `EventName=ucp.operation.completed`, and schema version `1`. When enabled by `InputCaptureMode`, its `InputJson` is an operation-specific allowlist rather than a serialized request body. It retains values needed to reproduce a call (for example search text, requested/effective store, currency, culture, product/cart/order identifiers, line item identifiers and quantities) and reports truncation explicitly. UCP response bodies and output snapshots are not copied into telemetry; successful-result semantics are verified by reproducing the captured input under a debugger when `Always` is explicitly enabled.
 
 The following values are never copied into these snapshots: authorization or API keys, raw handoff/session tokens, address text and postal codes, buyer identities or contact data, organization identities, cart names, notes, payment data, raw coupon values, GraphQL documents, complete variables, and complete results. Tokens/cursors use a bounded fingerprint where correlation is useful; private identity, address, and buyer data use field-presence flags plus safe country/region identifiers.
 
@@ -508,8 +510,8 @@ Direct dependency spans record `vc.dependency.outcome`. Successful dependencies 
 
 `UCP:Observability:InputCaptureMode` supports:
 
-- `Always` (default): write the allowlisted input for successful and failed operations;
-- `ErrorsOnly`: write it only for `error`, `rejected`, or `degraded` outcomes;
+- `ErrorsOnly` (default): write the allowlisted input only for `error`, `rejected`, or `degraded` outcomes;
+- `Always`: write it for successful and failed operations;
 - `None`: omit `InputJson` while retaining normal trace attributes and counters.
 
 Production Platform configuration must allow `Information` for the `VirtoCommerce.UCP` category, otherwise successful/rejected/canceled terminal events are filtered before any exporter sees them:
@@ -528,7 +530,9 @@ Production Platform configuration must allow `Information` for the `VirtoCommerc
 
 Unhandled XAPI resolver exceptions are captured through GraphQL.NET's `UnhandledExceptionDelegate`. The original exception is attached to the active XAPI span as the standard OpenTelemetry `exception` event (`exception.type`, `exception.message`, `exception.stacktrace`) and emitted as one correlated structured error log (`EventId=2001`) with the same trace/span ids and a safe failing-call input summary. Expected GraphQL errors without a CLR exception contain bounded codes, paths, and messages but no invented stack trace. UCP never writes the complete GraphQL response envelope to its own logs.
 
-`VirtoCommerce.UCP` registers only its activity sources with the Platform tracer provider. It does not create another provider or configure an exporter, sampler, service name, or Azure SDK. With the Virto Commerce OpenTelemetry module, set `OpenTelemetry:Enabled`, `OpenTelemetry:Endpoint`, and the process-wide `OTEL_SERVICE_NAME`. In Azure Monitor, UCP/XAPI `ActivityKind.Internal` spans map to dependencies and their attributes become custom dimensions; the trace id correlates them with ASP.NET requests and structured logs.
+`VirtoCommerce.UCP` registers its activity sources with the Platform tracer provider and does not create another provider or configure an OpenTelemetry exporter, sampler, or service name. With the Virto Commerce OpenTelemetry module, set `OpenTelemetry:Enabled`, `OpenTelemetry:Endpoint`, and the process-wide `OTEL_SERVICE_NAME`. In Azure Monitor, UCP/XAPI `ActivityKind.Internal` spans map to dependencies and their attributes become custom dimensions; the trace id correlates them with ASP.NET requests and structured logs.
+
+The official Virto Commerce Application Insights module currently uses the classic Application Insights SDK, which does not export arbitrary UCP `ActivitySource` spans by itself. `EnableApplicationInsightsCompatibilityBridge=true` therefore maps UCP, XAPI, and MCP activities to classic `DependencyTelemetry` without creating a second OpenTelemetry provider. The bridge requests activity data without setting the W3C `Recorded` flag: the OpenTelemetry sampler remains authoritative for the OpenTelemetry pipeline, while the classic Application Insights telemetry processors and sampling settings apply to the bridge output. Set this option to `false` when the OpenTelemetry pipeline already exports the same traces to the target Application Insights resource, preventing duplicate dependencies.
 
 The MCP C# SDK 1.4 copies the complete `content` of an `isError: true` result into the `tools/call` activity status description independently of logging levels. For the 16 UCP tools, an incoming MCP message filter keeps the `Error` status but replaces that description with the bounded `UCP tool returned an error.` after the response has been produced. The client still receives the lossless XAPI envelope. Foreign MCP tools and successful calls are not changed.
 

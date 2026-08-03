@@ -19,6 +19,8 @@ internal sealed class XApiRequestTelemetrySnapshot
     public string CultureName { get; private init; }
     public int? SearchQueryLength { get; private init; }
     public string SearchQueryHash { get; private init; }
+    public string SearchQuery { get; private init; }
+    public string SearchFilter { get; private init; }
     public bool? FilterPresent { get; private init; }
     public int? PageSize { get; private init; }
     public string ReferenceType { get; private init; }
@@ -35,6 +37,8 @@ internal sealed class XApiRequestTelemetrySnapshot
         variables ??= new Dictionary<string, object>();
         var command = GetDictionary(variables, "command");
         var searchQuery = GetString(variables, "query");
+        var searchFilter = GetString(variables, "filter");
+        var diagnosticSearchQuery = SanitizeDiagnosticText(searchQuery);
         var storeId = FirstNotEmpty(GetString(variables, "storeId"), GetString(command, "storeId"));
         var currency = FirstNotEmpty(GetString(variables, "currencyCode"), GetString(command, "currencyCode"));
         var culture = FirstNotEmpty(GetString(variables, "cultureName"), GetString(command, "cultureName"));
@@ -46,20 +50,22 @@ internal sealed class XApiRequestTelemetrySnapshot
 
         return new XApiRequestTelemetrySnapshot
         {
-            VariableNames = UcpTelemetrySnapshotSanitizer.JoinNames(variables.Keys, maxItems: 20),
-            StoreId = UcpTelemetrySnapshotSanitizer.SanitizeText(storeId),
-            CurrencyCode = UcpTelemetrySnapshotSanitizer.SanitizeText(currency),
-            CultureName = UcpTelemetrySnapshotSanitizer.SanitizeText(culture),
+            VariableNames = UcpTelemetryInputSanitizer.JoinNames(variables.Keys, maxItems: 20),
+            StoreId = UcpTelemetryInputSanitizer.SanitizeText(storeId),
+            CurrencyCode = UcpTelemetryInputSanitizer.SanitizeText(currency),
+            CultureName = UcpTelemetryInputSanitizer.SanitizeText(culture),
             SearchQueryLength = searchQuery?.Length,
-            SearchQueryHash = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(searchQuery),
-            FilterPresent = variables.TryGetValue("filter", out var filter) ? !string.IsNullOrWhiteSpace(Convert.ToString(filter, CultureInfo.InvariantCulture)) : null,
+            SearchQueryHash = UcpTelemetryInputSanitizer.ComputeFingerprint(diagnosticSearchQuery),
+            SearchQuery = diagnosticSearchQuery,
+            SearchFilter = SanitizeDiagnosticText(searchFilter),
+            FilterPresent = variables.ContainsKey("filter") ? !string.IsNullOrWhiteSpace(searchFilter) : null,
             PageSize = GetInt32(variables, "first"),
             ReferenceType = referenceType,
-            ReferenceValue = UcpTelemetrySnapshotSanitizer.SanitizeText(referenceValue),
-            ReferenceHash = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(referenceValue),
-            CartId = UcpTelemetrySnapshotSanitizer.SanitizeText(cartId),
-            ProductId = UcpTelemetrySnapshotSanitizer.SanitizeText(productId),
-            LineItemId = UcpTelemetrySnapshotSanitizer.SanitizeText(lineItemId),
+            ReferenceValue = UcpTelemetryInputSanitizer.SanitizeText(referenceValue),
+            ReferenceHash = UcpTelemetryInputSanitizer.ComputeFingerprint(referenceValue),
+            CartId = UcpTelemetryInputSanitizer.SanitizeText(cartId),
+            ProductId = UcpTelemetryInputSanitizer.SanitizeText(productId),
+            LineItemId = UcpTelemetryInputSanitizer.SanitizeText(lineItemId),
             Quantity = quantity,
             SafeInputJson = BuildSafeInputJson(variables, command, storeId, currency, culture, cartId, productId, lineItemId, quantity),
         };
@@ -84,6 +90,13 @@ internal sealed class XApiRequestTelemetrySnapshot
         activity?.SetTag("vc.xapi.input.quantity", Quantity);
     }
 
+    public void EnrichInput(Activity activity)
+    {
+        activity?.SetTag("vc.xapi.input_json", SafeInputJson);
+        activity?.SetTag("vc.catalog.search.query", SearchQuery);
+        activity?.SetTag("vc.catalog.search.filter", SearchFilter);
+    }
+
     private static string BuildSafeInputJson(
         IDictionary<string, object> variables,
         IDictionary<string, object> command,
@@ -103,6 +116,22 @@ internal sealed class XApiRequestTelemetrySnapshot
         Add(result, "cart_id", cartId);
         Add(result, "product_id", productId);
         Add(result, "line_item_id", lineItemId);
+        AddDiagnosticText(result, "query", GetString(variables, "query"));
+        AddDiagnosticText(result, "filter", GetString(variables, "filter"));
+        AddDiagnosticText(result, "sort", GetString(variables, "sort"));
+        Add(result, "checkout_id", GetString(variables, "checkoutId"));
+        Add(result, "country_id", GetString(variables, "countryId"));
+        Add(result, "command_id", GetString(command, "id"));
+        if (GetInt32(variables, "first") is { } pageSize)
+        {
+            result["page_size"] = pageSize;
+        }
+        var cursor = GetString(variables, "after");
+        if (!string.IsNullOrWhiteSpace(cursor))
+        {
+            result["cursor_present"] = true;
+            result["cursor_fingerprint"] = UcpTelemetryInputSanitizer.ComputeFingerprint(cursor);
+        }
         if (quantity.HasValue)
         {
             result["quantity"] = quantity.Value;
@@ -131,7 +160,7 @@ internal sealed class XApiRequestTelemetrySnapshot
         var json = result.ToJsonString();
         return json.Length <= MaxInputJsonLength
             ? json
-            : UcpTelemetrySnapshotSanitizer.CreateTruncatedPayload(json);
+            : UcpTelemetryInputSanitizer.CreateTruncatedPayload(json);
     }
 
     private static void AddNestedCommandSummary(JsonObject result, string name, IDictionary<string, object> value, string addressName)
@@ -164,7 +193,12 @@ internal sealed class XApiRequestTelemetrySnapshot
             ["phone_present"] = HasValue(address, "phone"),
             ["email_present"] = HasValue(address, "email"),
         };
-        Add(summary, "id", FirstNotEmpty(GetString(address, "id"), GetString(address, "key")));
+        var addressId = FirstNotEmpty(GetString(address, "id"), GetString(address, "key"));
+        if (!string.IsNullOrWhiteSpace(addressId))
+        {
+            summary["id_present"] = true;
+            summary["id_fingerprint"] = UcpTelemetryInputSanitizer.ComputeFingerprint(addressId);
+        }
         Add(summary, "country_code", GetString(address, "countryCode"));
         Add(summary, "region_id", GetString(address, "regionId"));
         if (GetInt32(address, "addressType") is { } addressType)
@@ -176,11 +210,27 @@ internal sealed class XApiRequestTelemetrySnapshot
 
     private static void Add(JsonObject target, string name, string value)
     {
-        var sanitized = UcpTelemetrySnapshotSanitizer.SanitizeText(value, MaxLoggedTextLength);
+        var sanitized = UcpTelemetryInputSanitizer.SanitizeText(value, MaxLoggedTextLength);
         if (sanitized != null)
         {
             target[name] = sanitized;
         }
+    }
+
+    private static void AddDiagnosticText(JsonObject target, string name, string value)
+    {
+        var sanitized = SanitizeDiagnosticText(value);
+        if (sanitized != null)
+        {
+            target[name] = sanitized;
+        }
+    }
+
+    private static string SanitizeDiagnosticText(string value)
+    {
+        return UcpTelemetryInputSanitizer.SanitizeText(
+            UcpTelemetryInputSanitizer.RedactPotentialPii(value),
+            MaxLoggedTextLength);
     }
 
     private static IDictionary<string, object> GetDictionary(IDictionary<string, object> source, string name)

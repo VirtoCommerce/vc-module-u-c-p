@@ -32,6 +32,10 @@ public class Module : IModule, IHasConfiguration
 
     public void Initialize(IServiceCollection serviceCollection)
     {
+        var observabilityOptions = Configuration
+            .GetSection("UCP:Observability")
+            .Get<UcpObservabilityOptions>() ?? new UcpObservabilityOptions();
+
         serviceCollection.AddHttpContextAccessor();
         serviceCollection.AddDistributedMemoryCache();
         serviceCollection.Configure<UcpOptions>(Configuration.GetSection("UCP"));
@@ -43,6 +47,10 @@ public class Module : IModule, IHasConfiguration
         serviceCollection.Configure<SwaggerGenOptions>(options =>
             options.OperationFilter<UcpXApiResponseOperationFilter>());
         serviceCollection.AddScoped<UcpOperationTelemetry>();
+        if (observabilityOptions.EnableApplicationInsightsCompatibilityBridge)
+        {
+            serviceCollection.AddHostedService<UcpApplicationInsightsActivityBridge>();
+        }
         serviceCollection.AddScoped<UcpMcpCallToolFilter>();
         serviceCollection.ConfigureOpenTelemetryTracerProvider(tracing =>
         {

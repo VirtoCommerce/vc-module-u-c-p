@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using GraphQL;
 using GraphQL.Execution;
 using Microsoft.Extensions.Logging;
+using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Services;
 using Xunit;
 
@@ -167,9 +168,39 @@ public class XApiInProcessExecutorTests
         Assert.Equal("B2B-store", input.RootElement.GetProperty("store_id").GetString());
         Assert.Equal("USD", input.RootElement.GetProperty("currency").GetString());
         Assert.Equal("ru-RU", input.RootElement.GetProperty("culture").GetString());
-        Assert.False(input.RootElement.TryGetProperty("query", out _));
+        Assert.Equal("микро волновка", input.RootElement.GetProperty("query").GetString());
+        Assert.Equal("price:[100 TO 500]", input.RootElement.GetProperty("filter").GetString());
         Assert.DoesNotContain(entry.Properties.Values, value => value?.ToString() == "buyer-secret@example.com");
         Assert.DoesNotContain("UserId", entry.Properties.Keys);
+    }
+
+    [Fact]
+    public void RequestSnapshot_EnrichesXApiSpanWithBoundedDiagnosticInputWithoutPii()
+    {
+        var snapshot = XApiRequestTelemetrySnapshot.Create(new Dictionary<string, object>
+        {
+            ["storeId"] = "B2B-store",
+            ["userId"] = "buyer-secret@example.com",
+            ["currencyCode"] = "USD",
+            ["cultureName"] = "en-US",
+            ["query"] = "Carriage Bolt secret@example.com +1 555 123 4567",
+            ["filter"] = "price:[100 TO 500]",
+            ["first"] = 3,
+        });
+        using var activity = new Activity("XAPI XCatalog UcpSearchProducts").Start();
+
+        snapshot.Enrich(activity);
+        snapshot.EnrichInput(activity);
+
+        Assert.Equal("Carriage Bolt [redacted-email] [redacted-phone]", activity.GetTagItem("vc.catalog.search.query"));
+        Assert.Equal("price:[100 TO 500]", activity.GetTagItem("vc.catalog.search.filter"));
+        using var input = JsonDocument.Parse(Assert.IsType<string>(activity.GetTagItem("vc.xapi.input_json")));
+        Assert.Equal("Carriage Bolt [redacted-email] [redacted-phone]", input.RootElement.GetProperty("query").GetString());
+        Assert.Equal(3, input.RootElement.GetProperty("page_size").GetInt32());
+        var inputJson = input.RootElement.GetRawText();
+        Assert.DoesNotContain("secret@example.com", inputJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("555 123 4567", inputJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("buyer-secret@example.com", inputJson, StringComparison.Ordinal);
     }
 
     [Fact]

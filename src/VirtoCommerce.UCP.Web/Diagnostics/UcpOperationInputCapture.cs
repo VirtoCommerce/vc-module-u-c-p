@@ -14,12 +14,12 @@ internal sealed class UcpOperationInputCapture
 {
     private const int MaxInputJsonLength = 4096;
     private const int MaxCollectionItems = 20;
-    private const int MaxSummaryItems = UcpTelemetrySnapshotSanitizer.MaxSummaryItems;
-    private const int MaxIdentifierLength = UcpTelemetrySnapshotSanitizer.MaxIdentifierLength;
-    private const int MaxTextLength = UcpTelemetrySnapshotSanitizer.MaxTextLength;
+    private const int MaxSummaryItems = UcpTelemetryInputSanitizer.MaxSummaryItems;
+    private const int MaxIdentifierLength = UcpTelemetryInputSanitizer.MaxIdentifierLength;
+    private const int MaxTextLength = UcpTelemetryInputSanitizer.MaxTextLength;
 
     private readonly JsonObject _input = new();
-    private readonly UcpTelemetrySnapshotSanitizer _sanitizer = new();
+    private readonly UcpTelemetryInputSanitizer _sanitizer = new();
 
     public string ArgumentNames { get; private set; }
     public string RequestedStoreId { get; private set; }
@@ -27,6 +27,7 @@ internal sealed class UcpOperationInputCapture
     public string StoreSource { get; private set; }
     public string EffectiveCurrency { get; private set; }
     public string EffectiveCulture { get; private set; }
+    public string DiagnosticQuery { get; private set; }
     public bool InputTruncated => _sanitizer.InputTruncated;
     public string TruncatedFields => _sanitizer.TruncatedFields;
 
@@ -69,13 +70,13 @@ internal sealed class UcpOperationInputCapture
     public void CaptureMcp(string operation, IDictionary<string, JsonElement> arguments)
     {
         arguments ??= new Dictionary<string, JsonElement>();
-        ArgumentNames = UcpTelemetrySnapshotSanitizer.JoinNames(arguments.Keys);
+        ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys);
         switch (operation)
         {
             case ModuleConstants.Operations.GetStoreCapabilities:
                 break;
             case ModuleConstants.Operations.SearchProducts:
-                AddMcpText(arguments, _input, "query", "query");
+                AddMcpQuery(arguments);
                 AddMcpCommerceContext(arguments);
                 AddMcpNumber(arguments, _input, "price_min", "price_min");
                 AddMcpNumber(arguments, _input, "price_max", "price_max");
@@ -130,11 +131,11 @@ internal sealed class UcpOperationInputCapture
                 AddMcpCartContext(arguments);
                 break;
             case ModuleConstants.Operations.ListCountries:
-                AddMcpText(arguments, _input, "query", "query");
+                AddMcpQuery(arguments);
                 AddMcpNumber(arguments, _input, "limit", "limit");
                 break;
             case ModuleConstants.Operations.ResolveCountry:
-                AddMcpText(arguments, _input, "query", "query");
+                AddMcpQuery(arguments);
                 break;
             case ModuleConstants.Operations.ListRegions:
                 AddMcpIdentifier(arguments, _input, "country_id", "country_id");
@@ -145,7 +146,7 @@ internal sealed class UcpOperationInputCapture
     public void CaptureRest(string operation, IDictionary<string, object> arguments)
     {
         arguments ??= new Dictionary<string, object>();
-        ArgumentNames = UcpTelemetrySnapshotSanitizer.JoinNames(arguments.Keys.Where(x => !string.Equals(x, "cancellationToken", StringComparison.OrdinalIgnoreCase)));
+        ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys.Where(x => !string.Equals(x, "cancellationToken", StringComparison.OrdinalIgnoreCase)));
         switch (operation)
         {
             case ModuleConstants.Operations.GetStoreCapabilities:
@@ -187,11 +188,11 @@ internal sealed class UcpOperationInputCapture
                 CaptureOrderTrackingQuery(GetArgument<UcpOrderTrackingQuery>(arguments, "query"), GetArgumentString(arguments, "orderId"));
                 break;
             case ModuleConstants.Operations.ListCountries:
-                AddText(_input, "query", GetArgumentString(arguments, "query"), "query");
+                AddQuery(GetArgumentString(arguments, "query"));
                 AddNumber(_input, "limit", GetArgumentNullableInt(arguments, "limit"));
                 break;
             case ModuleConstants.Operations.ResolveCountry:
-                AddText(_input, "query", GetArgumentString(arguments, "query"), "query");
+                AddQuery(GetArgumentString(arguments, "query"));
                 break;
             case ModuleConstants.Operations.ListRegions:
                 AddIdentifier(_input, "country_id", GetArgumentString(arguments, "countryId"), "country_id");
@@ -206,7 +207,7 @@ internal sealed class UcpOperationInputCapture
             return;
         }
 
-        AddText(_input, "query", request.Query, "query");
+        AddQuery(request.Query);
         AddCommerceContext(request.StoreId, request.Context?.StoreId, request.Currency, request.Context?.Currency, request.Language, request.Context?.Language);
         AddNumber(_input, "limit", request.Limit ?? request.Pagination?.Limit);
         AddNumber(_input, "price_min", request.Filters?.Price?.Min);
@@ -305,7 +306,7 @@ internal sealed class UcpOperationInputCapture
 
         _input["session_present"] = true;
         _input["session_length"] = request.UcpSession.Length;
-        _input["session_fingerprint"] = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(request.UcpSession);
+        _input["session_fingerprint"] = UcpTelemetryInputSanitizer.ComputeFingerprint(request.UcpSession);
     }
 
     private void CaptureOrderTrackingQuery(UcpOrderTrackingQuery query, string routeOrderId)
@@ -572,7 +573,7 @@ internal sealed class UcpOperationInputCapture
             ["phone_present"] = IsJsonPropertyPresent(address, "phone"),
             ["email_present"] = IsJsonPropertyPresent(address, "email"),
         };
-        AddIdentifier(value, "id", GetJsonString(address, "id"), $"{name}.id");
+        AddFingerprint(value, "id", GetJsonString(address, "id"), $"{name}.id");
         AddIdentifier(value, "country_code", GetJsonString(address, "country_code"), $"{name}.country_code");
         AddIdentifier(value, "region_id", GetJsonString(address, "region_id"), $"{name}.region_id");
         _input[name] = value;
@@ -596,7 +597,7 @@ internal sealed class UcpOperationInputCapture
             ["phone_present"] = !string.IsNullOrWhiteSpace(address.Phone),
             ["email_present"] = !string.IsNullOrWhiteSpace(address.Email),
         };
-        AddIdentifier(value, "id", address.Id, $"{name}.id");
+        AddFingerprint(value, "id", address.Id, $"{name}.id");
         AddIdentifier(value, "country_code", address.CountryCode, $"{name}.country_code");
         AddIdentifier(value, "region_id", address.RegionId, $"{name}.region_id");
         _input[name] = value;
@@ -628,7 +629,7 @@ internal sealed class UcpOperationInputCapture
             return;
         }
         target[$"{name}_length"] = value.Length;
-        target[$"{name}_fingerprint"] = UcpTelemetrySnapshotSanitizer.ComputeFingerprint(value);
+        target[$"{name}_fingerprint"] = UcpTelemetryInputSanitizer.ComputeFingerprint(value);
     }
 
     private void AddIdentifierArray(JsonObject target, string name, IEnumerable<string> values, string field)
@@ -686,6 +687,17 @@ internal sealed class UcpOperationInputCapture
         }
     }
 
+    private void AddQuery(string value)
+    {
+        var redacted = UcpTelemetryInputSanitizer.RedactPotentialPii(value);
+        var sanitized = _sanitizer.Sanitize(redacted, MaxTextLength, "query");
+        if (sanitized != null)
+        {
+            _input["query"] = sanitized;
+            DiagnosticQuery = sanitized;
+        }
+    }
+
     private static void AddNumber(JsonObject target, string name, long? value)
     {
         if (value.HasValue)
@@ -702,6 +714,11 @@ internal sealed class UcpOperationInputCapture
     private void AddMcpText(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)
     {
         AddText(target, targetName, GetMcpString(source, sourceName), targetName);
+    }
+
+    private void AddMcpQuery(IDictionary<string, JsonElement> source)
+    {
+        AddQuery(GetMcpString(source, "query"));
     }
 
     private static void AddMcpNumber(IDictionary<string, JsonElement> source, JsonObject target, string sourceName, string targetName)

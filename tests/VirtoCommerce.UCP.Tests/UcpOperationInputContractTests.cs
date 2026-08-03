@@ -92,6 +92,15 @@ public class UcpOperationInputContractTests
     }
 
     [Fact]
+    public void ObservabilityDefaults_CaptureInputsOnlyOnErrorsAndEnableClassicAppInsightsCompatibility()
+    {
+        var options = new UcpObservabilityOptions();
+
+        Assert.Equal(UcpInputCaptureMode.ErrorsOnly, options.InputCaptureMode);
+        Assert.True(options.EnableApplicationInsightsCompatibilityBridge);
+    }
+
+    [Fact]
     public void ErrorsOnlyMode_DropsSuccessfulInputsAndKeepsFailedInputs()
     {
         var success = Execute(
@@ -115,7 +124,11 @@ public class UcpOperationInputContractTests
     public void CompletionEvent_ContainsReproductionInputWithoutOutputSnapshotFields()
     {
         var logger = new CaptureLogger();
-        var telemetry = new UcpOperationTelemetry(logger);
+        var options = Options.Create(new UcpOptions
+        {
+            Observability = new UcpObservabilityOptions { InputCaptureMode = UcpInputCaptureMode.Always },
+        });
+        var telemetry = new UcpOperationTelemetry(logger, options);
         telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest");
         telemetry.CaptureRestArguments(new Dictionary<string, object>
         {
@@ -155,6 +168,19 @@ public class UcpOperationInputContractTests
     }
 
     [Fact]
+    public void InputContract_RedactsEmailAndPhoneFromDiagnosticQuery()
+    {
+        var inputJson = Execute(
+            ModuleConstants.Operations.SearchProducts,
+            telemetry => telemetry.CaptureMcpArguments(Args(
+                ("query", "Carriage Bolt secret@example.com +1 555 123 4567"))));
+
+        Assert.Contains("Carriage Bolt [redacted-email] [redacted-phone]", inputJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret@example.com", inputJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("555 123 4567", inputJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SnapshotSanitizer_UsesOriginalJsonForFallbackMetadataAfterArrayReduction()
     {
         var source = new JsonObject
@@ -163,7 +189,7 @@ public class UcpOperationInputContractTests
             ["fixed"] = new string('z', 256),
         };
         var originalJson = source.ToJsonString();
-        var sanitizer = new UcpTelemetrySnapshotSanitizer();
+        var sanitizer = new UcpTelemetryInputSanitizer();
 
         var resultJson = sanitizer.SerializeBounded(source, maxLength: 96, "input_json");
 
@@ -171,7 +197,7 @@ public class UcpOperationInputContractTests
         Assert.True(result.RootElement.GetProperty("truncated").GetBoolean());
         Assert.Equal(originalJson.Length, result.RootElement.GetProperty("original_length").GetInt32());
         Assert.Equal(
-            UcpTelemetrySnapshotSanitizer.ComputeFingerprint(originalJson),
+            UcpTelemetryInputSanitizer.ComputeFingerprint(originalJson),
             result.RootElement.GetProperty("fingerprint").GetString());
         Assert.True(sanitizer.InputTruncated);
         Assert.Contains("input_json", sanitizer.TruncatedFields, StringComparison.Ordinal);
@@ -180,7 +206,7 @@ public class UcpOperationInputContractTests
     [Fact]
     public void SnapshotSanitizer_NormalizesControlCharactersAndReportsTheBoundary()
     {
-        var sanitizer = new UcpTelemetrySnapshotSanitizer();
+        var sanitizer = new UcpTelemetryInputSanitizer();
 
         var result = sanitizer.Sanitize("ab\r\ncdef", maxLength: 4, "query");
 

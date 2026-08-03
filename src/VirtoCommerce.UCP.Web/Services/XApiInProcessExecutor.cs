@@ -175,6 +175,11 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
                 httpContext.Request.ContentType = originalContentType;
             }
 
+            var failed = !canceled && (errorCount > 0 || !completed);
+            if (_operationTelemetry.ShouldWriteXApiInput(failed))
+            {
+                requestSnapshot.EnrichInput(activity);
+            }
             _operationTelemetry.CompleteXApiCall(isMutation, errorCount, completed, canceled);
         }
     }

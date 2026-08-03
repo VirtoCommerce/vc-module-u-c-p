@@ -16,13 +16,16 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
+using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Filters;
@@ -32,7 +35,7 @@ using Xunit;
 namespace VirtoCommerce.UCP.Tests;
 
 [Trait("Category", "Unit")]
-public class UcpTransportObservabilityContractTests
+public class UcpObservabilityContractTests
 {
     private const string RawCanary = "RAW-CANARY-VCST-5544-XAPI-DETAIL";
 
@@ -130,7 +133,7 @@ public class UcpTransportObservabilityContractTests
         var httpContext = new DefaultHttpContext();
         var actionDescriptor = new ControllerActionDescriptor
         {
-            MethodInfo = typeof(UcpTransportObservabilityContractTests)
+            MethodInfo = typeof(UcpObservabilityContractTests)
                 .GetMethod(nameof(AnnotatedRestAction), BindingFlags.NonPublic | BindingFlags.Static),
         };
         var actionContext = new ActionContext(httpContext, new RouteData(), actionDescriptor);
@@ -442,8 +445,10 @@ public class UcpTransportObservabilityContractTests
         Assert.Equal("ru-RU", activity.GetTagItem("vc.culture.name"));
         Assert.Equal(14, activity.GetTagItem("vc.catalog.search.query.length"));
         Assert.NotNull(activity.GetTagItem("vc.catalog.search.query.hash"));
-        Assert.DoesNotContain(activity.TagObjects, tag => tag.Value?.ToString() == "микро волновка");
-        Assert.DoesNotContain(activity.TagObjects, tag => tag.Value?.ToString() == "buyer-secret@example.com");
+        Assert.Equal("микро волновка", activity.GetTagItem("vc.catalog.search.query"));
+        using var activityInput = JsonDocument.Parse(Assert.IsType<string>(activity.GetTagItem("vc.ucp.input_json")));
+        Assert.Equal("микро волновка", activityInput.RootElement.GetProperty("query").GetString());
+        Assert.DoesNotContain("buyer-secret@example.com", activityInput.RootElement.GetRawText(), StringComparison.Ordinal);
 
         var terminalLog = Assert.Single(logger.Entries);
         using var input = JsonDocument.Parse(Assert.IsType<string>(terminalLog.Properties["InputJson"]));
@@ -460,7 +465,11 @@ public class UcpTransportObservabilityContractTests
     public void UcpOperationTelemetry_WritesBoundedAllowlistedInputForSuccessfulOperation()
     {
         var logger = new CapturingTelemetryLogger();
-        var telemetry = new UcpOperationTelemetry(logger);
+        var options = Options.Create(new UcpOptions
+        {
+            Observability = new UcpObservabilityOptions { InputCaptureMode = UcpInputCaptureMode.Always },
+        });
+        var telemetry = new UcpOperationTelemetry(logger, options);
         telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest");
         telemetry.CaptureRestArguments(new Dictionary<string, object>
         {
@@ -640,6 +649,71 @@ public class UcpTransportObservabilityContractTests
         Assert.Equal("error", dependency.GetTagItem("vc.dependency.outcome"));
         Assert.Equal(nameof(InvalidOperationException), dependency.StatusDescription);
         Assert.Equal(typeof(InvalidOperationException).FullName, dependency.GetTagItem("error.type"));
+    }
+
+    [Fact]
+    public void UcpApplicationInsightsActivityBridge_MapsXApiActivityWithoutBreakingW3CCorrelation()
+    {
+        const string parentSourceName = "VCST5544.Tests.ApplicationInsightsParent";
+        var stopped = new ConcurrentQueue<Activity>();
+        using var listener = CreateActivityListener(parentSourceName, stopped);
+        using var parentSource = new ActivitySource(parentSourceName);
+        using var parent = parentSource.StartActivity("UCP search_products", ActivityKind.Internal);
+        Assert.NotNull(parent);
+
+        using (var xApiActivity = UcpDiagnostics.StartXApi("XCatalog", "UcpSearchProducts", "query", 1))
+        {
+            Assert.NotNull(xApiActivity);
+            xApiActivity.SetTag("vc.xapi.error.codes", "NULL_REFERENCE");
+            xApiActivity.SetTag("vc.catalog.search.query", "микроволновка");
+            xApiActivity.SetStatus(ActivityStatusCode.Error, "GraphQL errors");
+        }
+
+        var activity = Assert.Single(stopped, item => item.DisplayName == "XAPI XCatalog UcpSearchProducts");
+        var dependency = UcpApplicationInsightsActivityBridge.CreateDependencyTelemetry(activity);
+
+        Assert.Equal("XAPI XCatalog UcpSearchProducts", dependency.Name);
+        Assert.Equal("XAPI", dependency.Type);
+        Assert.Equal("XCatalog", dependency.Target);
+        Assert.False(dependency.Success);
+        Assert.Equal("NULL_REFERENCE", dependency.ResultCode);
+        Assert.Equal(activity.TraceId.ToString(), dependency.Context.Operation.Id);
+        Assert.Equal(activity.ParentSpanId.ToString(), dependency.Context.Operation.ParentId);
+        Assert.Equal(activity.SpanId.ToString(), dependency.Id);
+        Assert.Equal("микроволновка", dependency.Properties["vc.catalog.search.query"]);
+        Assert.Equal("UcpSearchProducts", dependency.Properties["graphql.operation.name"]);
+    }
+
+    [Fact]
+    public void UcpApplicationInsightsActivityBridge_RequestsDataWithoutForcingRecordedFlag()
+    {
+        Assert.Equal(
+            ActivitySamplingResult.AllData,
+            UcpApplicationInsightsActivityBridge.GetSamplingResult(
+                UcpDiagnostics.ActivitySourceName,
+                $"UCP {ModuleConstants.Operations.SearchProducts}"));
+        Assert.Equal(
+            ActivitySamplingResult.AllData,
+            UcpApplicationInsightsActivityBridge.GetSamplingResult(
+                UcpDiagnostics.McpActivitySourceName,
+                $"tools/call {ModuleConstants.McpTools.SearchProducts}"));
+        Assert.Equal(
+            ActivitySamplingResult.None,
+            UcpApplicationInsightsActivityBridge.GetSamplingResult(
+                UcpDiagnostics.McpActivitySourceName,
+                "tools/list"));
+    }
+
+    [Fact]
+    public async Task UcpApplicationInsightsActivityBridge_IsNoOpWithoutOfficialModule()
+    {
+        await using var serviceProvider = new ServiceCollection().BuildServiceProvider();
+        using var listener = new UcpApplicationInsightsActivityBridge(
+            serviceProvider,
+            NullLogger<UcpApplicationInsightsActivityBridge>.Instance);
+
+        await listener.StartAsync(TestContext.Current.CancellationToken);
+        await listener.StopAsync(TestContext.Current.CancellationToken);
     }
 
     private static ActivityListener CreateActivityListener(
