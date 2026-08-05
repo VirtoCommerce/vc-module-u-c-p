@@ -158,21 +158,14 @@ public abstract class UcpServiceBase
         string source,
         Func<JsonElement, bool> canTolerateError)
     {
-        if (document.RootElement.ValueKind != JsonValueKind.Object)
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
         {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a non-object GraphQL response.", StatusCodes.Status500InternalServerError);
         }
 
-        var hasErrorsProperty = document.RootElement.TryGetProperty("errors", out var errors);
-        if (hasErrorsProperty && errors.ValueKind != JsonValueKind.Array)
-        {
-            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an invalid GraphQL errors field.", StatusCodes.Status500InternalServerError);
-        }
-
-        var errorCount = hasErrorsProperty ? errors.GetArrayLength() : 0;
-        var hasBlockingErrors = errorCount > 0 &&
-            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
-        if (hasBlockingErrors)
+        var errorCount = GetGraphQlErrorCount(root, source, out var errors);
+        if (HasBlockingErrors(errors, errorCount, canTolerateError))
         {
             throw new XApiResponseException(source, result, errorCount);
         }
@@ -182,17 +175,52 @@ public abstract class UcpServiceBase
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} failed without a GraphQL error response.", StatusCodes.Status500InternalServerError);
         }
 
-        if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        EnsureObjectData(root, source);
+        MarkDegradedForRecoverableErrors(errorCount);
+    }
+
+    private int GetGraphQlErrorCount(JsonElement root, string source, out JsonElement errors)
+    {
+        if (!root.TryGetProperty("errors", out errors))
+        {
+            return 0;
+        }
+
+        if (errors.ValueKind != JsonValueKind.Array)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an invalid GraphQL errors field.", StatusCodes.Status500InternalServerError);
+        }
+
+        return errors.GetArrayLength();
+    }
+
+    private static bool HasBlockingErrors(
+        JsonElement errors,
+        int errorCount,
+        Func<JsonElement, bool> canTolerateError)
+    {
+        return errorCount > 0 &&
+            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
+    }
+
+    private void EnsureObjectData(JsonElement root, string source)
+    {
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a GraphQL response without object data.", StatusCodes.Status500InternalServerError);
         }
+    }
 
-        if (errorCount > 0)
+    private void MarkDegradedForRecoverableErrors(int errorCount)
+    {
+        if (errorCount == 0)
         {
-            HttpContextAccessor.HttpContext?.RequestServices?
-                .GetService<IUcpOperationTelemetry>()?
-                .MarkDegraded(nameof(XApiResponseException), "xapi_recoverable_graphql_error");
+            return;
         }
+
+        HttpContextAccessor.HttpContext?.RequestServices?
+            .GetService<IUcpOperationTelemetry>()?
+            .MarkDegraded(nameof(XApiResponseException), "xapi_recoverable_graphql_error");
     }
 
     protected static string FirstNotEmpty(params string[] values)

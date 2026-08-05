@@ -175,6 +175,13 @@ public sealed class UcpOperationTelemetry : IUcpOperationTelemetry
         }
     }
 
+    public void MarkError(Exception exception, string errorCode = null)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        MarkError(exception.GetType().FullName, errorCode);
+        _activity?.AddException(exception);
+    }
+
     public void MarkDegraded(string errorType, string errorCode = null)
     {
         lock (_outcomeLock)
@@ -188,13 +195,6 @@ public sealed class UcpOperationTelemetry : IUcpOperationTelemetry
             _errorType = errorType;
             _errorCode = errorCode;
         }
-    }
-
-    public void MarkError(Exception exception, string errorCode = null)
-    {
-        ArgumentNullException.ThrowIfNull(exception);
-        MarkError(exception.GetType().FullName, errorCode);
-        _activity?.AddException(exception);
     }
 
     public void MarkCanceled()
@@ -226,12 +226,13 @@ public sealed class UcpOperationTelemetry : IUcpOperationTelemetry
             _operation,
             _transport,
             outcome.Outcome,
-            _xApiCallCount,
-            _xApiFailedCallCount,
-            _xApiGraphQlErrorCount,
-            _xApiCanceledCallCount,
-            _xApiMutationCallCount,
-            _xApiMutationFailedCallCount);
+            new UcpDiagnostics.XApiMetricCounts(
+                _xApiCallCount,
+                _xApiFailedCallCount,
+                _xApiGraphQlErrorCount,
+                _xApiCanceledCallCount,
+                _xApiMutationCallCount,
+                _xApiMutationFailedCallCount));
         WriteTerminalLog(inputJson, outcome);
         _activity?.Dispose();
         _activity = null;

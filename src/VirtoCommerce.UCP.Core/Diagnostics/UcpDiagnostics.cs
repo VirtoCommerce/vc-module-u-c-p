@@ -61,12 +61,7 @@ public static class UcpDiagnostics
         string operation,
         string transport,
         string outcome,
-        int xApiCallCount,
-        int xApiFailedCallCount,
-        int xApiGraphQlErrorCount,
-        int xApiCanceledCallCount,
-        int xApiMutationCallCount,
-        int xApiMutationFailedCallCount)
+        in XApiMetricCounts xApi)
     {
         var tags = new TagList
         {
@@ -76,12 +71,12 @@ public static class UcpDiagnostics
         };
 
         OperationCounter.Add(1, tags);
-        AddIfPositive(XApiCallCounter, xApiCallCount, tags);
-        AddIfPositive(XApiFailedCallCounter, xApiFailedCallCount, tags);
-        AddIfPositive(XApiGraphQlErrorCounter, xApiGraphQlErrorCount, tags);
-        AddIfPositive(XApiCanceledCallCounter, xApiCanceledCallCount, tags);
-        AddIfPositive(XApiMutationCallCounter, xApiMutationCallCount, tags);
-        AddIfPositive(XApiMutationFailedCallCounter, xApiMutationFailedCallCount, tags);
+        AddIfPositive(XApiCallCounter, xApi.CallCount, tags);
+        AddIfPositive(XApiFailedCallCounter, xApi.FailedCallCount, tags);
+        AddIfPositive(XApiGraphQlErrorCounter, xApi.GraphQlErrorCount, tags);
+        AddIfPositive(XApiCanceledCallCounter, xApi.CanceledCallCount, tags);
+        AddIfPositive(XApiMutationCallCounter, xApi.MutationCallCount, tags);
+        AddIfPositive(XApiMutationFailedCallCounter, xApi.MutationFailedCallCount, tags);
     }
 
     public static async Task<T> ExecuteDependency<T>(string component, string operation, Func<Task<T>> execute)
@@ -179,4 +174,12 @@ public static class UcpDiagnostics
             counter.Add(value, tags);
         }
     }
+
+    public readonly record struct XApiMetricCounts(
+        int CallCount,
+        int FailedCallCount,
+        int GraphQlErrorCount,
+        int CanceledCallCount,
+        int MutationCallCount,
+        int MutationFailedCallCount);
 }

@@ -31,6 +31,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private const int MaxGraphQlPathLength = 256;
     private static readonly EventId GraphQlResolverExceptionEvent = new(2001, "XApiGraphQlResolverException");
     private static readonly ConcurrentDictionary<(string Query, string OperationName), string> OperationTypes = new();
+    private static readonly ConcurrentDictionary<Type, string> SchemaVersions = new();
 
     private readonly XApiDocumentExecuters _documentExecuters;
     private readonly IGraphQLTextSerializer _graphQlSerializer;
@@ -412,7 +413,18 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private static string GetSchemaVersion<TSchemaFactory>()
         where TSchemaFactory : ISchema
     {
-        return SchemaVersionCache<TSchemaFactory>.Value;
+        return SchemaVersions.GetOrAdd(typeof(TSchemaFactory), GetSchemaVersion);
+    }
+
+    private static string GetSchemaVersion(Type schemaFactoryType)
+    {
+        var markerType = schemaFactoryType.IsGenericType
+            ? schemaFactoryType.GetGenericArguments().FirstOrDefault()
+            : null;
+        var assembly = markerType?.Assembly;
+
+        return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly?.GetName().Version?.ToString();
     }
 
     private sealed class XApiCallTelemetryContext
@@ -519,20 +531,4 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         }
     }
 
-    private static class SchemaVersionCache<TSchemaFactory>
-        where TSchemaFactory : ISchema
-    {
-        public static readonly string Value = GetValue();
-
-        private static string GetValue()
-        {
-            var markerType = typeof(TSchemaFactory).IsGenericType
-                ? typeof(TSchemaFactory).GetGenericArguments().FirstOrDefault()
-                : null;
-            var assembly = markerType?.Assembly;
-
-            return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-                ?? assembly?.GetName().Version?.ToString();
-        }
-    }
 }

@@ -11,6 +11,7 @@ namespace VirtoCommerce.UCP.Web.Diagnostics;
 internal sealed partial class UcpTelemetryInputSanitizer
 {
     private const int FingerprintByteCount = 8;
+    private const int JsonNullLiteralLength = 4;
     public const int MaxIdentifierLength = 128;
     public const int MaxTextLength = 256;
     public const int MaxNameLength = 64;
@@ -32,23 +33,7 @@ internal sealed partial class UcpTelemetryInputSanitizer
         var clone = (JsonObject)source.DeepClone();
         var arrays = new PriorityQueue<JsonArray, int>();
         CollectArrays(clone, arrays);
-        var estimatedLength = originalJson.Length;
-        while (estimatedLength > maxLength && arrays.TryDequeue(out var target, out _))
-        {
-            if (!IsAttachedTo(target, clone) || target.Count == 0)
-            {
-                continue;
-            }
-
-            var removedItem = target[target.Count - 1];
-            estimatedLength -= (removedItem?.ToJsonString().Length ?? 4) + (target.Count > 1 ? 1 : 0);
-            target.RemoveAt(target.Count - 1);
-            MarkTruncated(field);
-            if (target.Count > 0)
-            {
-                arrays.Enqueue(target, -target.Count);
-            }
-        }
+        TrimArrays(clone, arrays, originalJson.Length, maxLength, field);
 
         var json = clone.ToJsonString();
         if (json.Length <= maxLength)
@@ -58,6 +43,32 @@ internal sealed partial class UcpTelemetryInputSanitizer
 
         MarkTruncated(field);
         return CreateTruncatedPayload(originalJson);
+    }
+
+    private void TrimArrays(
+        JsonObject root,
+        PriorityQueue<JsonArray, int> arrays,
+        int originalLength,
+        int maxLength,
+        string field)
+    {
+        var estimatedLength = originalLength;
+        while (estimatedLength > maxLength && arrays.TryDequeue(out var target, out _))
+        {
+            if (!IsAttachedTo(target, root) || target.Count == 0)
+            {
+                continue;
+            }
+
+            var removedItem = target[target.Count - 1];
+            estimatedLength -= (removedItem?.ToJsonString().Length ?? JsonNullLiteralLength) + (target.Count > 1 ? 1 : 0);
+            target.RemoveAt(target.Count - 1);
+            MarkTruncated(field);
+            if (target.Count > 0)
+            {
+                arrays.Enqueue(target, -target.Count);
+            }
+        }
     }
 
     public string Sanitize(string value, int maxLength, string field)

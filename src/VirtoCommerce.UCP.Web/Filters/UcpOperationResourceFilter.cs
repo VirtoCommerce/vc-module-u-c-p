@@ -33,46 +33,42 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
         }
 
         var serverActivity = context.HttpContext.Features.Get<IHttpActivityFeature>()?.Activity;
-        var telemetryStarted = _operationTelemetry.TryBegin(operation, "rest", serverActivity?.Context);
-        if (telemetryStarted)
+        if (!_operationTelemetry.TryBegin(operation, "rest", serverActivity?.Context))
         {
-            context.HttpContext.Items[TelemetryStartedKey] = true;
-            if (!string.IsNullOrEmpty(_operationTelemetry.TraceId))
-            {
-                context.HttpContext.Response.Headers[ModuleConstants.Headers.TraceId] = _operationTelemetry.TraceId;
-            }
+            await next();
+            return;
+        }
+
+        context.HttpContext.Items[TelemetryStartedKey] = true;
+        if (!string.IsNullOrEmpty(_operationTelemetry.TraceId))
+        {
+            context.HttpContext.Response.Headers[ModuleConstants.Headers.TraceId] = _operationTelemetry.TraceId;
         }
 
         try
         {
             var executedContext = await next();
-            if (telemetryStarted && executedContext.Exception != null)
+            if (executedContext.Exception != null)
             {
                 MarkException(executedContext.Exception);
             }
-            else if (telemetryStarted && context.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError)
             {
                 _operationTelemetry.MarkError("HttpResponse", $"http_{context.HttpContext.Response.StatusCode}");
             }
-            else if (telemetryStarted && context.HttpContext.Response.StatusCode >= StatusCodes.Status400BadRequest)
+            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status400BadRequest)
             {
                 _operationTelemetry.MarkRejected($"http_{context.HttpContext.Response.StatusCode}");
             }
         }
         catch (Exception exception)
         {
-            if (telemetryStarted)
-            {
-                MarkException(exception);
-            }
+            MarkException(exception);
             throw;
         }
         finally
         {
-            if (telemetryStarted)
-            {
-                _operationTelemetry.Complete();
-            }
+            _operationTelemetry.Complete();
         }
     }
 
