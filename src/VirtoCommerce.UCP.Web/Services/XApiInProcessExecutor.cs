@@ -13,7 +13,6 @@ using GraphQLParser.AST;
 using GraphQLParser.Exceptions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
-using OpenTelemetry.Trace;
 using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
@@ -31,6 +30,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private const int MaxGraphQlPathSegments = 10;
     private const int MaxGraphQlPathLength = 256;
     private static readonly EventId GraphQlResolverExceptionEvent = new(2001, "XApiGraphQlResolverException");
+    private static readonly ConcurrentDictionary<(string Query, string OperationName), string> OperationTypes = new();
 
     private readonly XApiDocumentExecuters _documentExecuters;
     private readonly IGraphQLTextSerializer _graphQlSerializer;
@@ -123,7 +123,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         var operationType = GetOperationType(request.Query, request.OperationName);
         var isMutation = operationType == "mutation";
         var callIndex = _operationTelemetry.BeginXApiCall(isMutation);
-        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(request.Variables);
+        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(request.Variables, _operationTelemetry.IsInputCaptureEnabled);
         var schemaVersion = GetSchemaVersion<TSchemaFactory>();
         _operationTelemetry.CaptureXApiRequest(requestSnapshot);
         var activity = UcpDiagnostics.StartXApi(schema, operationName, operationType, callIndex);
@@ -152,7 +152,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             schema,
             call.OperationName,
             call.CallIndex,
-            request.Variables,
+            call.RequestSnapshot,
             call.SchemaVersion,
             call.ExceptionLogState);
 
@@ -250,6 +250,11 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
 
     protected static string GetOperationType(string query, string operationName)
     {
+        return OperationTypes.GetOrAdd((query, operationName), key => ParseOperationType(key.Query, key.OperationName));
+    }
+
+    private static string ParseOperationType(string query, string operationName)
+    {
         try
         {
             var document = Parser.Parse(query.TrimStart('\uFEFF'));
@@ -320,7 +325,10 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         GraphQlExceptionTelemetryContext telemetry,
         Exception exception)
     {
-        var requestSnapshot = XApiRequestTelemetrySnapshot.Create(telemetry.RequestVariables);
+        var requestSnapshot = telemetry.RequestSnapshot;
+        var inputJson = (_operationTelemetry?.ShouldWriteXApiInput(failed: true) ?? true)
+            ? requestSnapshot.SafeInputJson
+            : null;
         var errorPath = GetErrorPath(context);
         var (traceId, spanId) = GetTraceIdentifiers(telemetry.Activity);
 
@@ -352,7 +360,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             requestSnapshot.CultureName,
             requestSnapshot.PageSize,
             requestSnapshot.FilterPresent,
-            requestSnapshot.SafeInputJson,
+            inputJson,
             requestSnapshot.ReferenceType,
             requestSnapshot.ReferenceValue,
             traceId,
@@ -404,13 +412,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private static string GetSchemaVersion<TSchemaFactory>()
         where TSchemaFactory : ISchema
     {
-        var markerType = typeof(TSchemaFactory).IsGenericType
-            ? typeof(TSchemaFactory).GetGenericArguments().FirstOrDefault()
-            : null;
-        var assembly = markerType?.Assembly;
-
-        return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? assembly?.GetName().Version?.ToString();
+        return SchemaVersionCache<TSchemaFactory>.Value;
     }
 
     private sealed class XApiCallTelemetryContext
@@ -465,12 +467,32 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             IDictionary<string, object> requestVariables,
             string schemaVersion,
             GraphQlExceptionLogState logState)
+            : this(
+                activity,
+                schema,
+                operationName,
+                callIndex,
+                XApiRequestTelemetrySnapshot.Create(requestVariables),
+                schemaVersion,
+                logState)
+        {
+            RequestVariables = requestVariables;
+        }
+
+        internal GraphQlExceptionTelemetryContext(
+            Activity activity,
+            string schema,
+            string operationName,
+            int callIndex,
+            XApiRequestTelemetrySnapshot requestSnapshot,
+            string schemaVersion,
+            GraphQlExceptionLogState logState)
         {
             Activity = activity;
             Schema = schema;
             OperationName = operationName;
             CallIndex = callIndex;
-            RequestVariables = requestVariables;
+            RequestSnapshot = requestSnapshot;
             SchemaVersion = schemaVersion;
             LogState = logState;
         }
@@ -480,6 +502,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         public string OperationName { get; }
         public int CallIndex { get; }
         public IDictionary<string, object> RequestVariables { get; }
+        internal XApiRequestTelemetrySnapshot RequestSnapshot { get; }
         public string SchemaVersion { get; }
         public GraphQlExceptionLogState LogState { get; }
     }
@@ -493,6 +516,23 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         {
             return _loggedExceptions.TryAdd(exception, 0)
                 && Interlocked.Increment(ref _loggedCount) <= MaxLoggedGraphQlExceptions;
+        }
+    }
+
+    private static class SchemaVersionCache<TSchemaFactory>
+        where TSchemaFactory : ISchema
+    {
+        public static readonly string Value = GetValue();
+
+        private static string GetValue()
+        {
+            var markerType = typeof(TSchemaFactory).IsGenericType
+                ? typeof(TSchemaFactory).GetGenericArguments().FirstOrDefault()
+                : null;
+            var assembly = markerType?.Assembly;
+
+            return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                ?? assembly?.GetName().Version?.ToString();
         }
     }
 }

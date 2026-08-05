@@ -1,8 +1,8 @@
 using System;
-using System.Reflection;
+using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Mvc.Controllers;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Filters;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Services;
@@ -13,6 +13,7 @@ namespace VirtoCommerce.UCP.Web.Filters;
 public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncActionFilter, IOrderedFilter
 {
     private const int TelemetryFilterOrder = -3000;
+    private static readonly object TelemetryStartedKey = new();
     private readonly UcpOperationTelemetry _operationTelemetry;
 
     public UcpOperationResourceFilter(UcpOperationTelemetry operationTelemetry)
@@ -31,42 +32,53 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
             return;
         }
 
-        _operationTelemetry.Begin(operation, "rest");
-        if (!string.IsNullOrEmpty(_operationTelemetry.TraceId))
+        var serverActivity = context.HttpContext.Features.Get<IHttpActivityFeature>()?.Activity;
+        var telemetryStarted = _operationTelemetry.TryBegin(operation, "rest", serverActivity?.Context);
+        if (telemetryStarted)
         {
-            context.HttpContext.Response.Headers[ModuleConstants.Headers.TraceId] = _operationTelemetry.TraceId;
+            context.HttpContext.Items[TelemetryStartedKey] = true;
+            if (!string.IsNullOrEmpty(_operationTelemetry.TraceId))
+            {
+                context.HttpContext.Response.Headers[ModuleConstants.Headers.TraceId] = _operationTelemetry.TraceId;
+            }
         }
 
         try
         {
             var executedContext = await next();
-            if (executedContext.Exception != null)
+            if (telemetryStarted && executedContext.Exception != null)
             {
                 MarkException(executedContext.Exception);
             }
-            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError)
+            else if (telemetryStarted && context.HttpContext.Response.StatusCode >= StatusCodes.Status500InternalServerError)
             {
                 _operationTelemetry.MarkError("HttpResponse", $"http_{context.HttpContext.Response.StatusCode}");
             }
-            else if (context.HttpContext.Response.StatusCode >= StatusCodes.Status400BadRequest)
+            else if (telemetryStarted && context.HttpContext.Response.StatusCode >= StatusCodes.Status400BadRequest)
             {
                 _operationTelemetry.MarkRejected($"http_{context.HttpContext.Response.StatusCode}");
             }
         }
         catch (Exception exception)
         {
-            MarkException(exception);
+            if (telemetryStarted)
+            {
+                MarkException(exception);
+            }
             throw;
         }
         finally
         {
-            _operationTelemetry.Complete();
+            if (telemetryStarted)
+            {
+                _operationTelemetry.Complete();
+            }
         }
     }
 
     public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
-        if (GetOperation(context) != null)
+        if (GetOperation(context) != null && context.HttpContext.Items.ContainsKey(TelemetryStartedKey))
         {
             _operationTelemetry.CaptureRestArguments(context.ActionArguments);
         }
@@ -76,9 +88,10 @@ public sealed class UcpOperationResourceFilter : IAsyncResourceFilter, IAsyncAct
 
     private static string GetOperation(FilterContext context)
     {
-        return context.ActionDescriptor is ControllerActionDescriptor actionDescriptor
-            ? actionDescriptor.MethodInfo.GetCustomAttribute<UcpOperationAttribute>(inherit: true)?.Name
-            : null;
+        return context.ActionDescriptor.EndpointMetadata
+            .OfType<UcpOperationAttribute>()
+            .FirstOrDefault()?
+            .Name;
     }
 
     private void MarkException(Exception exception)

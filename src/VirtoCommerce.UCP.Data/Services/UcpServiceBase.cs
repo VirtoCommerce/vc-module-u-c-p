@@ -4,7 +4,9 @@ using System.Linq;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
 
@@ -79,11 +81,12 @@ public abstract class UcpServiceBase
         return FirstNotEmpty(GetHeader(ModuleConstants.Headers.CorrelationId), _httpContextAccessor.HttpContext?.TraceIdentifier);
     }
 
-    protected virtual UcpException CreateException(
-        string code,
-        string message,
-        int statusCode = StatusCodes.Status400BadRequest,
-        Exception innerException = null)
+    protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
+    {
+        return CreateException(code, message, statusCode, null);
+    }
+
+    protected virtual UcpException CreateException(string code, string message, int statusCode, Exception innerException)
     {
         var exception = new UcpException(code, message, statusCode, innerException);
         exception.Error.CorrelationId = GetCorrelationId();
@@ -110,6 +113,14 @@ public abstract class UcpServiceBase
 
     protected virtual JsonDocument ParseGraphQlResult(XApiExecutionResult result, string source)
     {
+        return ParseGraphQlResult(result, source, null);
+    }
+
+    protected virtual JsonDocument ParseGraphQlResult(
+        XApiExecutionResult result,
+        string source,
+        Func<JsonElement, bool> canTolerateError)
+    {
         if (result == null || string.IsNullOrWhiteSpace(result.Json))
         {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an empty response.", StatusCodes.Status500InternalServerError);
@@ -131,7 +142,7 @@ public abstract class UcpServiceBase
 
         try
         {
-            ValidateGraphQlResult(document, result, source);
+            ValidateGraphQlResult(document, result, source, canTolerateError);
             return document;
         }
         catch
@@ -141,7 +152,11 @@ public abstract class UcpServiceBase
         }
     }
 
-    private void ValidateGraphQlResult(JsonDocument document, XApiExecutionResult result, string source)
+    private void ValidateGraphQlResult(
+        JsonDocument document,
+        XApiExecutionResult result,
+        string source,
+        Func<JsonElement, bool> canTolerateError)
     {
         if (document.RootElement.ValueKind != JsonValueKind.Object)
         {
@@ -155,12 +170,14 @@ public abstract class UcpServiceBase
         }
 
         var errorCount = hasErrorsProperty ? errors.GetArrayLength() : 0;
-        if (errorCount > 0)
+        var hasBlockingErrors = errorCount > 0 &&
+            (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
+        if (hasBlockingErrors)
         {
             throw new XApiResponseException(source, result, errorCount);
         }
 
-        if (!result.Succeeded)
+        if (!result.Succeeded && errorCount == 0)
         {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} failed without a GraphQL error response.", StatusCodes.Status500InternalServerError);
         }
@@ -168,6 +185,13 @@ public abstract class UcpServiceBase
         if (!document.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
         {
             throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a GraphQL response without object data.", StatusCodes.Status500InternalServerError);
+        }
+
+        if (errorCount > 0)
+        {
+            HttpContextAccessor.HttpContext?.RequestServices?
+                .GetService<IUcpOperationTelemetry>()?
+                .MarkDegraded(nameof(XApiResponseException), "xapi_recoverable_graphql_error");
         }
     }
 

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -10,6 +11,7 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Abstractions;
 using Microsoft.AspNetCore.Mvc.Controllers;
@@ -96,7 +98,7 @@ public class UcpObservabilityContractTests
         var telemetryLogger = new CapturingTelemetryLogger();
         var exceptionLogger = new CapturingExceptionLogger<UcpExceptionFilter>();
         var telemetry = new UcpOperationTelemetry(telemetryLogger);
-        telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest");
+        telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest", parent.Context);
         var filter = new UcpExceptionFilter(telemetry, exceptionLogger);
         var exception = new UcpException("internal_error", RawCanary, StatusCodes.Status500InternalServerError);
         var context = new ExceptionContext(
@@ -131,10 +133,12 @@ public class UcpObservabilityContractTests
         Assert.NotNull(parent);
 
         var httpContext = new DefaultHttpContext();
+        httpContext.Features.Set<IHttpActivityFeature>(new TestHttpActivityFeature(parent));
         var actionDescriptor = new ControllerActionDescriptor
         {
             MethodInfo = typeof(UcpObservabilityContractTests)
                 .GetMethod(nameof(AnnotatedRestAction), BindingFlags.NonPublic | BindingFlags.Static),
+            EndpointMetadata = [new UcpOperationAttribute(ModuleConstants.Operations.SearchProducts)],
         };
         var actionContext = new ActionContext(httpContext, new RouteData(), actionDescriptor);
         var filters = new List<IFilterMetadata>();
@@ -367,6 +371,68 @@ public class UcpObservabilityContractTests
         Assert.Equal("canceled", terminalLog.Properties["UcpOutcome"]);
         Assert.Equal(0, terminalLog.Properties["XApiFailedCallCount"]);
         Assert.Equal(1, terminalLog.Properties["XApiCanceledCallCount"]);
+    }
+
+    [Fact]
+    public void UcpOperationTelemetry_UsesDegradedOutcomeForToleratedGraphQlErrors()
+    {
+        var logger = new CapturingTelemetryLogger();
+        var telemetry = new UcpOperationTelemetry(logger);
+        telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest");
+        telemetry.BeginXApiCall(isMutation: false);
+        telemetry.CompleteXApiCall(isMutation: false, errorCount: 1, completed: true);
+
+        telemetry.MarkDegraded(nameof(XApiResponseException), "xapi_recoverable_graphql_error");
+        telemetry.Complete();
+
+        var terminalLog = Assert.Single(logger.Entries);
+        Assert.Equal("degraded", terminalLog.Properties["UcpOutcome"]);
+        Assert.Equal(nameof(XApiResponseException), terminalLog.Properties["ErrorType"]);
+        Assert.Equal("xapi_recoverable_graphql_error", terminalLog.Properties["ErrorCode"]);
+    }
+
+    [Fact]
+    public void UcpOperationTelemetry_ReentryIsNonThrowingAndKeepsTheActiveOperation()
+    {
+        var logger = new CapturingTelemetryLogger();
+        var telemetry = new UcpOperationTelemetry(logger);
+
+        Assert.True(telemetry.TryBegin(ModuleConstants.Operations.SearchProducts, "mcp"));
+        Assert.False(telemetry.TryBegin(ModuleConstants.Operations.GetProduct, "mcp"));
+        telemetry.Complete();
+
+        var terminalLog = Assert.Single(logger.Entries, entry => entry.EventId.Id == 2000);
+        Assert.Equal(ModuleConstants.Operations.SearchProducts, terminalLog.Properties["UcpOperation"]);
+    }
+
+    [Fact]
+    public void UcpOperationTelemetry_RecordsMetricsThatSurviveTraceSampling()
+    {
+        var measurements = new ConcurrentQueue<(string Name, long Value)>();
+        using var listener = new MeterListener();
+        listener.InstrumentPublished = (instrument, meterListener) =>
+        {
+            if (instrument.Meter.Name == UcpDiagnostics.MeterName)
+            {
+                meterListener.EnableMeasurementEvents(instrument);
+            }
+        };
+        listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
+            measurements.Enqueue((instrument.Name, value)));
+        listener.Start();
+
+        var telemetry = new UcpOperationTelemetry(new CapturingTelemetryLogger());
+        telemetry.Begin(ModuleConstants.Operations.UpdateCart, "mcp");
+        telemetry.BeginXApiCall(isMutation: true);
+        telemetry.CompleteXApiCall(isMutation: true, errorCount: 1, completed: true);
+        telemetry.Complete();
+
+        Assert.Contains(measurements, measurement => measurement == ("vc.ucp.operation.count", 1));
+        Assert.Contains(measurements, measurement => measurement == ("vc.xapi.call.count", 1));
+        Assert.Contains(measurements, measurement => measurement == ("vc.xapi.failed_call.count", 1));
+        Assert.Contains(measurements, measurement => measurement == ("vc.xapi.graphql.error.count", 1));
+        Assert.Contains(measurements, measurement => measurement == ("vc.xapi.mutation.call.count", 1));
+        Assert.Contains(measurements, measurement => measurement == ("vc.xapi.mutation.failed_call.count", 1));
     }
 
     [Theory]
@@ -810,6 +876,18 @@ public class UcpObservabilityContractTests
         Assert.Single(logger.Entries);
     }
 
+    [Fact]
+    public void UcpMcpErrorResultFactory_SanitizesTheCodeInEveryOutputChannel()
+    {
+        var result = UcpMcpErrorResultFactory.FromUcp(
+            new UcpException("unsafe code with spaces", "safe message", StatusCodes.Status400BadRequest));
+
+        Assert.Equal("ucp_error", result.StructuredContent.Value.GetProperty("code").GetString());
+        Assert.Equal("ucp_error", result.Meta?["error_code"]?.GetValue<string>());
+        Assert.Contains("ucp_error", Assert.IsType<TextContentBlock>(Assert.Single(result.Content)).Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("unsafe code with spaces", result.StructuredContent.Value.GetRawText(), StringComparison.Ordinal);
+    }
+
     [UcpOperation(ModuleConstants.Operations.SearchProducts)]
     private static void AnnotatedRestAction()
     {
@@ -889,6 +967,16 @@ public class UcpObservabilityContractTests
         public string StructuredTraceId { get; set; }
         public string StructuredSpanId { get; set; }
         public IReadOnlyDictionary<string, object> Properties { get; set; }
+    }
+
+    private sealed class TestHttpActivityFeature : IHttpActivityFeature
+    {
+        public TestHttpActivityFeature(Activity activity)
+        {
+            Activity = activity;
+        }
+
+        public Activity Activity { get; set; }
     }
 
     private sealed class NoopScope : IDisposable

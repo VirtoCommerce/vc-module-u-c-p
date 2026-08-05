@@ -489,7 +489,7 @@ Every UCP MCP tool result also contains a model-visible `Trace ID: ...` text blo
 
 ## Observability and Logging
 
-The module adds exporter-neutral `VirtoCommerce.UCP` activities to the Platform's existing OpenTelemetry pipeline:
+The module emits exporter-neutral `VirtoCommerce.UCP` activities and metrics through the standard .NET diagnostics APIs:
 
 ```text
 MCP/REST request
@@ -498,7 +498,7 @@ MCP/REST request
       └─ existing SQL, Elastic, HTTP, cache, and other dependency spans
 ```
 
-Each actual in-process XAPI execution gets its own span. UCP does not create an OpenTelemetry provider or configure an OTLP exporter, endpoint, sampler, service resource, Serilog sink, or minimum logging level; those remain controlled by Platform and the installed observability module. When the classic Virto Commerce Application Insights module is installed, UCP can additionally use a small compatibility bridge to export these activities as correlated dependencies.
+Each actual in-process XAPI execution gets its own span. UCP does not create or modify an OpenTelemetry provider and does not configure an OTLP exporter, endpoint, sampler, service resource, Serilog sink, or minimum logging level; those remain controlled by Platform and the installed observability module. When the classic Virto Commerce Application Insights module is installed, UCP can additionally use a small compatibility bridge to export these activities as correlated dependencies.
 
 Each UCP operation writes one structured terminal log: `Information` for success/rejection/cancellation and `Error` for failures. The log contains outcome, duration, XAPI call/failed/canceled/GraphQL-error counts, factual XAPI mutation attempt/failed counts, and trace/span ids. It does not infer transaction commit state or retry safety.
 
@@ -530,7 +530,25 @@ Production Platform configuration must allow `Information` for the `VirtoCommerc
 
 Unhandled XAPI resolver exceptions are captured through GraphQL.NET's `UnhandledExceptionDelegate`. The original exception is attached to the active XAPI span as the standard OpenTelemetry `exception` event (`exception.type`, `exception.message`, `exception.stacktrace`) and emitted as one correlated structured error log (`EventId=2001`) with the same trace/span ids and a safe failing-call input summary. Expected GraphQL errors without a CLR exception contain bounded codes, paths, and messages but no invented stack trace. UCP never writes the complete GraphQL response envelope to its own logs.
 
-`VirtoCommerce.UCP` registers its activity sources with the Platform tracer provider and does not create another provider or configure an OpenTelemetry exporter, sampler, or service name. With the Virto Commerce OpenTelemetry module, set `OpenTelemetry:Enabled`, `OpenTelemetry:Endpoint`, and the process-wide `OTEL_SERVICE_NAME`. In Azure Monitor, UCP/XAPI `ActivityKind.Internal` spans map to dependencies and their attributes become custom dimensions; the trace id correlates them with ASP.NET requests and structured logs.
+UCP deliberately does not register its sources or meter with the process-wide OpenTelemetry provider. When using Virto Commerce OpenTelemetry `3.1001.0-alpha.6-vcst-5641-config-driven-tracing-sources` or later, opt them in explicitly:
+
+```json
+{
+  "OpenTelemetry": {
+    "Enabled": true,
+    "Endpoint": "http://localhost:4317",
+    "Sources": [
+      "VirtoCommerce.UCP",
+      "Experimental.ModelContextProtocol"
+    ],
+    "Meters": [
+      "VirtoCommerce.UCP"
+    ]
+  }
+}
+```
+
+Set the process-wide `OTEL_SERVICE_NAME` as usual. `Sources` and `Meters` must be arrays, and every value must match the corresponding source or meter name exactly. Without this opt-in, UCP still works, but its custom spans or metrics are not exported by that provider. In Azure Monitor, UCP/XAPI `ActivityKind.Internal` spans map to dependencies and their attributes become custom dimensions; the trace id correlates them with ASP.NET requests and structured logs.
 
 The official Virto Commerce Application Insights module currently uses the classic Application Insights SDK, which does not export arbitrary UCP `ActivitySource` spans by itself. `EnableApplicationInsightsCompatibilityBridge=true` therefore maps UCP, XAPI, and MCP activities to classic `DependencyTelemetry` without creating a second OpenTelemetry provider. The bridge requests activity data without setting the W3C `Recorded` flag: the OpenTelemetry sampler remains authoritative for the OpenTelemetry pipeline, while the classic Application Insights telemetry processors and sampling settings apply to the bridge output. Set this option to `false` when the OpenTelemetry pipeline already exports the same traces to the target Application Insights resource, preventing duplicate dependencies.
 

@@ -82,7 +82,6 @@ public static class ModuleConstants
         public const string ProductNotFound = "product_not_found";
         public const string CartNotFound = "cart_not_found";
         public const string OrderNotFound = "order_not_found";
-        [System.Obsolete("XAPI GraphQL errors are returned unchanged and no longer mapped to this synthetic UCP error code.")]
         public const string XApiExecutionFailed = "xapi_execution_failed";
         public const string XApiInvalidResponse = "xapi_invalid_response";
         public const string InvalidRequest = "invalid_request";
@@ -133,8 +132,8 @@ public static class ModuleConstants
 
     public static class McpTools
     {
-        private static readonly HashSet<string> UcpToolNames =
-        [
+        public static IReadOnlySet<string> UcpToolNames { get; } = new HashSet<string>(System.StringComparer.Ordinal)
+        {
             GetStoreCapabilities,
             SearchProducts,
             GetProduct,
@@ -151,7 +150,7 @@ public static class ModuleConstants
             ListCountries,
             ResolveCountry,
             ListRegions,
-        ];
+        };
 
         public const string GetStoreCapabilities = Operations.GetStoreCapabilities;
         public const string SearchProducts = Operations.SearchProducts;

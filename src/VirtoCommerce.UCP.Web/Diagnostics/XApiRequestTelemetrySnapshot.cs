@@ -32,7 +32,9 @@ internal sealed class XApiRequestTelemetrySnapshot
     public int? Quantity { get; private init; }
     public string SafeInputJson { get; private set; }
 
-    public static XApiRequestTelemetrySnapshot Create(IDictionary<string, object> variables)
+    public static XApiRequestTelemetrySnapshot Create(
+        IDictionary<string, object> variables,
+        bool captureInputValues = true)
     {
         variables ??= new Dictionary<string, object>();
         var command = GetDictionary(variables, "command");
@@ -68,7 +70,10 @@ internal sealed class XApiRequestTelemetrySnapshot
             LineItemId = UcpTelemetryInputSanitizer.SanitizeText(lineItemId),
             Quantity = quantity,
         };
-        snapshot.SafeInputJson = BuildSafeInputJson(variables, command, snapshot);
+        if (captureInputValues)
+        {
+            snapshot.SafeInputJson = BuildSafeInputJson(variables, command, snapshot);
+        }
 
         return snapshot;
     }

@@ -32,15 +32,15 @@ internal static partial class UcpMcpErrorResultFactory
 
     public static CallToolResult FromUcp(UcpException exception)
     {
+        var safeCode = SafeErrorCodePattern().IsMatch(exception.Code ?? string.Empty) ? exception.Code : "ucp_error";
         var error = new UcpMcpToolError
         {
             IsError = true,
-            Code = exception.Code,
+            Code = safeCode,
             StatusCode = exception.StatusCode,
             Message = exception.Message,
         };
         var structuredContent = JsonSerializer.SerializeToElement(error, UcpMcpSerialization.Options);
-        var safeCode = SafeErrorCodePattern().IsMatch(exception.Code ?? string.Empty) ? exception.Code : "ucp_error";
         return new CallToolResult
         {
             IsError = true,

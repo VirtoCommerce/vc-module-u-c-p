@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
+using VirtoCommerce.UCP.Web;
 using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Models;
 using Xunit;
@@ -95,10 +97,35 @@ public class UcpOperationInputContractTests
     [Fact]
     public void InputContract_CoversAllCanonicalOperations()
     {
-        Assert.Equal(16, McpCases().Count());
-        Assert.Equal(16, RestCases().Count());
-        Assert.Contains(RestCases(), x => x.Operation == ModuleConstants.Operations.RestoreHandoff);
-        Assert.DoesNotContain(McpCases(), x => x.Operation == ModuleConstants.Operations.RestoreHandoff);
+        var expectedMcpOperations = ModuleConstants.McpTools.UcpToolNames.OrderBy(x => x, StringComparer.Ordinal);
+        var actualMcpOperations = McpCases().Select(x => x.Operation).OrderBy(x => x, StringComparer.Ordinal);
+        Assert.Equal(expectedMcpOperations, actualMcpOperations);
+
+        var expectedRestOperations = ModuleConstants.McpTools.UcpToolNames
+            .Where(x => x != ModuleConstants.Operations.CheckoutAndHandoff)
+            .Append(ModuleConstants.Operations.RestoreHandoff)
+            .OrderBy(x => x, StringComparer.Ordinal);
+        var actualRestOperations = RestCases().Select(x => x.Operation).OrderBy(x => x, StringComparer.Ordinal);
+        Assert.Equal(expectedRestOperations, actualRestOperations);
+    }
+
+    [Fact]
+    public void McpInputContract_DropsStructuredValuesFromStringAllowlistFields()
+    {
+        var productInput = Execute(
+            ModuleConstants.Operations.GetProduct,
+            telemetry => telemetry.CaptureMcpArguments(Args(("product_id", new { raw = SecretAddress }))));
+        var cartInput = Execute(
+            ModuleConstants.Operations.CreateCart,
+            telemetry => telemetry.CaptureMcpArguments(Args(("line_items", new[]
+            {
+                new { id = "line-marker", product_id = new { raw = SecretAddress }, quantity = 1 },
+            }))));
+
+        Assert.DoesNotContain(SecretAddress, productInput, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw", productInput, StringComparison.Ordinal);
+        Assert.DoesNotContain(SecretAddress, cartInput, StringComparison.Ordinal);
+        Assert.DoesNotContain("raw", cartInput, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -191,6 +218,32 @@ public class UcpOperationInputContractTests
     }
 
     [Fact]
+    public void InputContract_DoesNotRedactUnformattedNumericIdentifiersAsPhones()
+    {
+        const string sku = "SKU 1234567890";
+
+        var inputJson = Execute(
+            ModuleConstants.Operations.SearchProducts,
+            telemetry => telemetry.CaptureMcpArguments(Args(("query", sku))));
+
+        Assert.Contains(sku, inputJson, StringComparison.Ordinal);
+        Assert.DoesNotContain("[redacted-phone]", inputJson, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("OpenTelemetry:Endpoint")]
+    [InlineData("OTEL_EXPORTER_OTLP_ENDPOINT")]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")]
+    public void ObservabilityContract_DetectsConfiguredOtelExporter(string key)
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string> { [key] = "http://localhost:4317" })
+            .Build();
+
+        Assert.True(Module.HasConfiguredOtelExporter(configuration));
+    }
+
+    [Fact]
     public void SnapshotSanitizer_UsesOriginalJsonForFallbackMetadataAfterArrayReduction()
     {
         var source = new JsonObject
@@ -211,6 +264,24 @@ public class UcpOperationInputContractTests
             result.RootElement.GetProperty("fingerprint").GetString());
         Assert.True(sanitizer.InputTruncated);
         Assert.Contains("input_json", sanitizer.TruncatedFields, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SnapshotSanitizer_TrimsArrayInOnePassAndKeepsBoundedPayload()
+    {
+        var source = new JsonObject
+        {
+            ["items"] = new JsonArray(Enumerable.Range(1, 20).Select(x => JsonValue.Create($"item-{x:D2}-payload")).ToArray()),
+        };
+        var sanitizer = new UcpTelemetryInputSanitizer();
+
+        var resultJson = sanitizer.SerializeBounded(source, maxLength: 160, "input_json");
+
+        using var result = JsonDocument.Parse(resultJson);
+        var remainingItems = result.RootElement.GetProperty("items").GetArrayLength();
+        Assert.InRange(remainingItems, 1, 19);
+        Assert.True(resultJson.Length <= 160);
+        Assert.True(sanitizer.InputTruncated);
     }
 
     [Fact]

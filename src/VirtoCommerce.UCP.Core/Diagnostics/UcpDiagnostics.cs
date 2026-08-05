@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
 using System.Reflection;
 using System.Threading.Tasks;
 
@@ -9,6 +11,7 @@ public static class UcpDiagnostics
 {
     public const string ActivitySourceName = "VirtoCommerce.UCP";
     public const string McpActivitySourceName = "Experimental.ModelContextProtocol";
+    public const string MeterName = "VirtoCommerce.UCP";
 
     public static readonly string ModuleVersion =
         typeof(UcpDiagnostics).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
@@ -18,9 +21,22 @@ public static class UcpDiagnostics
         ActivitySourceName,
         ModuleVersion);
 
-    public static Activity StartOperation(string operation, string transport)
+    public static readonly Meter Meter = new(MeterName, ModuleVersion);
+
+    private static readonly Counter<long> OperationCounter = Meter.CreateCounter<long>("vc.ucp.operation.count");
+    private static readonly Counter<long> XApiCallCounter = Meter.CreateCounter<long>("vc.xapi.call.count");
+    private static readonly Counter<long> XApiFailedCallCounter = Meter.CreateCounter<long>("vc.xapi.failed_call.count");
+    private static readonly Counter<long> XApiGraphQlErrorCounter = Meter.CreateCounter<long>("vc.xapi.graphql.error.count");
+    private static readonly Counter<long> XApiCanceledCallCounter = Meter.CreateCounter<long>("vc.xapi.canceled_call.count");
+    private static readonly Counter<long> XApiMutationCallCounter = Meter.CreateCounter<long>("vc.xapi.mutation.call.count");
+    private static readonly Counter<long> XApiMutationFailedCallCounter = Meter.CreateCounter<long>("vc.xapi.mutation.failed_call.count");
+    private static readonly Counter<long> DependencyCounter = Meter.CreateCounter<long>("vc.dependency.call.count");
+
+    public static Activity StartOperation(string operation, string transport, ActivityContext? parentContext = null)
     {
-        var activity = ActivitySource.StartActivity($"UCP {operation}", ActivityKind.Internal);
+        var activity = parentContext.HasValue
+            ? ActivitySource.StartActivity($"UCP {operation}", ActivityKind.Internal, parentContext.Value)
+            : ActivitySource.StartActivity($"UCP {operation}", ActivityKind.Internal);
         activity?.SetTag("vc.ucp.operation", operation);
         activity?.SetTag("vc.ucp.transport", transport);
         activity?.SetTag("vc.ucp.version", ModuleConstants.UcpVersion);
@@ -41,6 +57,33 @@ public static class UcpDiagnostics
         return activity;
     }
 
+    public static void RecordOperation(
+        string operation,
+        string transport,
+        string outcome,
+        int xApiCallCount,
+        int xApiFailedCallCount,
+        int xApiGraphQlErrorCount,
+        int xApiCanceledCallCount,
+        int xApiMutationCallCount,
+        int xApiMutationFailedCallCount)
+    {
+        var tags = new TagList
+        {
+            { "vc.ucp.operation", operation },
+            { "vc.ucp.transport", transport },
+            { "vc.ucp.outcome", outcome },
+        };
+
+        OperationCounter.Add(1, tags);
+        AddIfPositive(XApiCallCounter, xApiCallCount, tags);
+        AddIfPositive(XApiFailedCallCounter, xApiFailedCallCount, tags);
+        AddIfPositive(XApiGraphQlErrorCounter, xApiGraphQlErrorCount, tags);
+        AddIfPositive(XApiCanceledCallCounter, xApiCanceledCallCount, tags);
+        AddIfPositive(XApiMutationCallCounter, xApiMutationCallCount, tags);
+        AddIfPositive(XApiMutationFailedCallCounter, xApiMutationFailedCallCount, tags);
+    }
+
     public static async Task<T> ExecuteDependency<T>(string component, string operation, Func<Task<T>> execute)
     {
         return await ExecuteDependency("platform", component, operation, execute);
@@ -58,12 +101,15 @@ public static class UcpDiagnostics
         try
         {
             var result = await execute();
-            activity?.SetTag("vc.dependency.outcome", classifyOutcome?.Invoke(result) ?? "success");
+            var outcome = classifyOutcome?.Invoke(result) ?? "success";
+            activity?.SetTag("vc.dependency.outcome", outcome);
+            RecordDependency(system, component, operation, outcome);
             return result;
         }
         catch (OperationCanceledException)
         {
             activity?.SetTag("vc.dependency.outcome", "canceled");
+            RecordDependency(system, component, operation, "canceled");
             throw;
         }
         catch (Exception exception)
@@ -71,6 +117,7 @@ public static class UcpDiagnostics
             activity?.SetTag("vc.dependency.outcome", "error");
             activity?.SetTag("error.type", exception.GetType().FullName);
             activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+            RecordDependency(system, component, operation, "error");
             throw;
         }
     }
@@ -88,10 +135,12 @@ public static class UcpDiagnostics
         {
             await execute();
             activity?.SetTag("vc.dependency.outcome", "success");
+            RecordDependency(system, component, operation, "success");
         }
         catch (OperationCanceledException)
         {
             activity?.SetTag("vc.dependency.outcome", "canceled");
+            RecordDependency(system, component, operation, "canceled");
             throw;
         }
         catch (Exception exception)
@@ -99,6 +148,7 @@ public static class UcpDiagnostics
             activity?.SetTag("vc.dependency.outcome", "error");
             activity?.SetTag("error.type", exception.GetType().FullName);
             activity?.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
+            RecordDependency(system, component, operation, "error");
             throw;
         }
     }
@@ -111,5 +161,22 @@ public static class UcpDiagnostics
         activity?.SetTag("vc.dependency.operation", operation);
 
         return activity;
+    }
+
+    private static void RecordDependency(string system, string component, string operation, string outcome)
+    {
+        DependencyCounter.Add(1,
+            new KeyValuePair<string, object>("vc.dependency.system", system),
+            new KeyValuePair<string, object>("vc.dependency.component", component),
+            new KeyValuePair<string, object>("vc.dependency.operation", operation),
+            new KeyValuePair<string, object>("vc.dependency.outcome", outcome));
+    }
+
+    private static void AddIfPositive(Counter<long> counter, int value, in TagList tags)
+    {
+        if (value > 0)
+        {
+            counter.Add(value, tags);
+        }
     }
 }

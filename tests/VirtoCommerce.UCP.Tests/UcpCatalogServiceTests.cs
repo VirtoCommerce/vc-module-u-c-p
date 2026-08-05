@@ -1,12 +1,16 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Security.Claims;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
@@ -18,6 +22,18 @@ namespace VirtoCommerce.UCP.Tests;
 [Trait("Category", "Unit")]
 public class UcpCatalogServiceTests
 {
+    [Fact]
+    public void UcpServiceBase_PreservesPublishedProtectedVirtualOverloads()
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var type = typeof(UcpServiceBase);
+
+        Assert.True(type.GetMethod("CreateException", flags, null, [typeof(string), typeof(string), typeof(int)], null)?.IsVirtual);
+        Assert.True(type.GetMethod("CreateException", flags, null, [typeof(string), typeof(string), typeof(int), typeof(Exception)], null)?.IsVirtual);
+        Assert.True(type.GetMethod("ParseGraphQlResult", flags, null, [typeof(XApiExecutionResult), typeof(string)], null)?.IsVirtual);
+        Assert.True(type.GetMethod("ParseGraphQlResult", flags, null, [typeof(XApiExecutionResult), typeof(string), typeof(Func<JsonElement, bool>)], null)?.IsVirtual);
+    }
+
     [Fact]
     public async Task SearchProducts_MapsXCatalogProductsAndBuyerContext()
     {
@@ -168,20 +184,31 @@ public class UcpCatalogServiceTests
     }
 
     [Fact]
-    public async Task GetProduct_PropagatesPropertyValueResolverErrorWithPartialData()
+    public async Task GetProduct_ToleratesPropertyValueResolverErrorWithPartialData()
     {
-        var executor = new StubXApiExecutor(PartialProductResponseJson, succeeded: false);
+        var executor = new SequenceXApiExecutor(new (string Json, bool Succeeded)[]
+        {
+            (PartialProductResponseJson, false),
+            ("""{"data":{"products":{"items":[{"id":"product-1","variations":[]}]}}}""", true),
+        });
+        var degradedTelemetry = new CapturingOperationTelemetry();
+        var httpContext = new DefaultHttpContext
+        {
+            RequestServices = new ServiceCollection()
+                .AddSingleton<IUcpOperationTelemetry>(degradedTelemetry)
+                .BuildServiceProvider(),
+        };
         var service = new UcpCatalogService(
             executor,
-            new HttpContextAccessor { HttpContext = new DefaultHttpContext() },
+            new HttpContextAccessor { HttpContext = httpContext },
             Options.Create(new UcpOptions { DefaultStoreId = "acme" }));
 
-        var exception = await Assert.ThrowsAsync<XApiResponseException>(() =>
-            service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken));
+        var response = await service.GetProduct("product-1", new UcpCatalogSearchRequest(), TestContext.Current.CancellationToken);
 
-        Assert.Equal("XCatalog", exception.Schema);
-        Assert.Equal(1, exception.ErrorCount);
-        Assert.Equal(PartialProductResponseJson, exception.Result.Json);
+        Assert.Equal("product-1", response.Product.Id);
+        Assert.Contains(response.Product.Attributes, attribute => attribute.Name == "ReleaseYear" && attribute.Value == null);
+        Assert.Equal(nameof(XApiResponseException), degradedTelemetry.ErrorType);
+        Assert.Equal("xapi_recoverable_graphql_error", degradedTelemetry.ErrorCode);
     }
 
     [Fact]
@@ -314,19 +341,25 @@ public class UcpCatalogServiceTests
 
     private sealed class SequenceXApiExecutor : IXApiInProcessExecutor
     {
-        private readonly Queue<string> _responses;
+        private readonly Queue<(string Json, bool Succeeded)> _responses;
 
         public SequenceXApiExecutor(params string[] responses)
         {
-            _responses = new Queue<string>(responses);
+            _responses = new Queue<(string Json, bool Succeeded)>(responses.Select(response => (response, true)));
+        }
+
+        public SequenceXApiExecutor(IEnumerable<(string Json, bool Succeeded)> responses)
+        {
+            _responses = new Queue<(string Json, bool Succeeded)>(responses);
         }
 
         public Task<XApiExecutionResult> Execute(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
+            var response = _responses.Dequeue();
             return Task.FromResult(new XApiExecutionResult
             {
-                Succeeded = true,
-                Json = _responses.Dequeue(),
+                Succeeded = response.Succeeded,
+                Json = response.Json,
             });
         }
 
@@ -338,6 +371,18 @@ public class UcpCatalogServiceTests
         public Task<XApiExecutionResult> ExecuteOrder(XApiExecutionRequest request, CancellationToken cancellationToken = default)
         {
             return Execute(request, cancellationToken);
+        }
+    }
+
+    private sealed class CapturingOperationTelemetry : IUcpOperationTelemetry
+    {
+        public string ErrorType { get; private set; }
+        public string ErrorCode { get; private set; }
+
+        public void MarkDegraded(string errorType, string errorCode = null)
+        {
+            ErrorType = errorType;
+            ErrorCode = errorCode;
         }
     }
 

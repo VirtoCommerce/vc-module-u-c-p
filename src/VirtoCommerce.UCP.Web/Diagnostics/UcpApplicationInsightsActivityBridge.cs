@@ -70,8 +70,8 @@ internal sealed class UcpApplicationInsightsActivityBridge : IHostedService, IDi
     private static bool ShouldExport(string sourceName, string activityName)
     {
         return sourceName == UcpDiagnostics.ActivitySourceName ||
-            sourceName == UcpDiagnostics.McpActivitySourceName &&
-            activityName.StartsWith("tools/call ", StringComparison.Ordinal);
+            (sourceName == UcpDiagnostics.McpActivitySourceName &&
+                activityName.StartsWith("tools/call ", StringComparison.Ordinal));
     }
 
     internal static ActivitySamplingResult GetSamplingResult(string sourceName, string activityName)

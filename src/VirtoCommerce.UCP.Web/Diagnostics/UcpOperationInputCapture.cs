@@ -20,6 +20,12 @@ internal sealed class UcpOperationInputCapture
 
     private readonly JsonObject _input = new();
     private readonly UcpTelemetryInputSanitizer _sanitizer = new();
+    private readonly bool _captureInputValues;
+
+    public UcpOperationInputCapture(bool captureInputValues = true)
+    {
+        _captureInputValues = captureInputValues;
+    }
 
     public string ArgumentNames { get; private set; }
     public string RequestedStoreId { get; private set; }
@@ -31,23 +37,31 @@ internal sealed class UcpOperationInputCapture
     public bool InputTruncated => _sanitizer.InputTruncated;
     public string TruncatedFields => _sanitizer.TruncatedFields;
 
-    public static UcpOperationInputCapture CreateMcp(string operation, IDictionary<string, JsonElement> arguments)
+    public static UcpOperationInputCapture CreateMcp(
+        string operation,
+        IDictionary<string, JsonElement> arguments,
+        bool captureInputValues = true)
     {
-        var capture = new UcpOperationInputCapture();
+        var capture = new UcpOperationInputCapture(captureInputValues);
         capture.CaptureMcp(operation, arguments);
         return capture;
     }
 
-    public static UcpOperationInputCapture CreateRest(string operation, IDictionary<string, object> arguments)
+    public static UcpOperationInputCapture CreateRest(
+        string operation,
+        IDictionary<string, object> arguments,
+        bool captureInputValues = true)
     {
-        var capture = new UcpOperationInputCapture();
+        var capture = new UcpOperationInputCapture(captureInputValues);
         capture.CaptureRest(operation, arguments);
         return capture;
     }
 
     public string GetInputJson()
     {
-        return _sanitizer.SerializeBounded(_input, MaxInputJsonLength, "input_json");
+        return _captureInputValues
+            ? _sanitizer.SerializeBounded(_input, MaxInputJsonLength, "input_json")
+            : null;
     }
 
     public void CaptureEffectiveContext(XApiRequestTelemetrySnapshot snapshot)
@@ -62,15 +76,22 @@ internal sealed class UcpOperationInputCapture
         EffectiveCulture = FirstNotEmpty(snapshot.CultureName, EffectiveCulture);
         StoreSource = ResolveStoreSource();
 
-        SetEffectiveValue("store", EffectiveStoreId, StoreSource);
-        SetEffectiveValue("currency", EffectiveCurrency, null);
-        SetEffectiveValue("language", EffectiveCulture, null);
+        if (_captureInputValues)
+        {
+            SetEffectiveValue("store", EffectiveStoreId, StoreSource);
+            SetEffectiveValue("currency", EffectiveCurrency, null);
+            SetEffectiveValue("language", EffectiveCulture, null);
+        }
     }
 
     public void CaptureMcp(string operation, IDictionary<string, JsonElement> arguments)
     {
         arguments ??= new Dictionary<string, JsonElement>();
         ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys);
+        if (!_captureInputValues)
+        {
+            return;
+        }
 
         if (!CaptureMcpCatalogAndCart(operation, arguments))
         {
@@ -165,6 +186,10 @@ internal sealed class UcpOperationInputCapture
     {
         arguments ??= new Dictionary<string, object>();
         ArgumentNames = UcpTelemetryInputSanitizer.JoinNames(arguments.Keys.Where(x => !string.Equals(x, "cancellationToken", StringComparison.OrdinalIgnoreCase)));
+        if (!_captureInputValues)
+        {
+            return;
+        }
 
         if (!CaptureRestCatalogAndCart(operation, arguments))
         {
@@ -824,7 +849,7 @@ internal sealed class UcpOperationInputCapture
         {
             return null;
         }
-        return value.ValueKind == JsonValueKind.String ? value.GetString() : value.GetRawText();
+        return value.ValueKind == JsonValueKind.String ? value.GetString() : null;
     }
 
     private static string GetJsonString(JsonElement value, string name)
@@ -834,7 +859,7 @@ internal sealed class UcpOperationInputCapture
             return null;
         }
 
-        return property.ValueKind == JsonValueKind.String ? property.GetString() : property.GetRawText();
+        return property.ValueKind == JsonValueKind.String ? property.GetString() : null;
     }
 
     private static bool IsMcpValuePresent(IDictionary<string, JsonElement> arguments, string name)

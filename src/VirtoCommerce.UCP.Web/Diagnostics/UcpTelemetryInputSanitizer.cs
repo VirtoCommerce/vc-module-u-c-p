@@ -30,12 +30,27 @@ internal sealed partial class UcpTelemetryInputSanitizer
         }
 
         var clone = (JsonObject)source.DeepClone();
-        var json = originalJson;
-        while (json.Length > maxLength && RemoveLastArrayItem(clone))
+        var arrays = new PriorityQueue<JsonArray, int>();
+        CollectArrays(clone, arrays);
+        var estimatedLength = originalJson.Length;
+        while (estimatedLength > maxLength && arrays.TryDequeue(out var target, out _))
         {
+            if (!IsAttachedTo(target, clone) || target.Count == 0)
+            {
+                continue;
+            }
+
+            var removedItem = target[target.Count - 1];
+            estimatedLength -= (removedItem?.ToJsonString().Length ?? 4) + (target.Count > 1 ? 1 : 0);
+            target.RemoveAt(target.Count - 1);
             MarkTruncated(field);
-            json = clone.ToJsonString();
+            if (target.Count > 0)
+            {
+                arrays.Enqueue(target, -target.Count);
+            }
         }
+
+        var json = clone.ToJsonString();
         if (json.Length <= maxLength)
         {
             return json;
@@ -132,25 +147,15 @@ internal sealed partial class UcpTelemetryInputSanitizer
         }.ToJsonString();
     }
 
-    private static bool RemoveLastArrayItem(JsonNode node)
-    {
-        var arrays = new List<JsonArray>();
-        CollectArrays(node, arrays);
-        var target = arrays.Where(x => x.Count > 0).OrderByDescending(x => x.Count).FirstOrDefault();
-        if (target == null)
-        {
-            return false;
-        }
-        target.RemoveAt(target.Count - 1);
-        return true;
-    }
-
-    private static void CollectArrays(JsonNode node, ICollection<JsonArray> arrays)
+    private static void CollectArrays(JsonNode node, PriorityQueue<JsonArray, int> arrays)
     {
         switch (node)
         {
             case JsonArray array:
-                arrays.Add(array);
+                if (array.Count > 0)
+                {
+                    arrays.Enqueue(array, -array.Count);
+                }
                 foreach (var item in array.Where(x => x != null))
                 {
                     CollectArrays(item, arrays);
@@ -165,13 +170,23 @@ internal sealed partial class UcpTelemetryInputSanitizer
         }
     }
 
+    private static bool IsAttachedTo(JsonNode node, JsonNode root)
+    {
+        while (node.Parent != null)
+        {
+            node = node.Parent;
+        }
+        return ReferenceEquals(node, root);
+    }
+
     [GeneratedRegex(
         @"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b",
         RegexOptions.CultureInvariant | RegexOptions.IgnoreCase)]
     private static partial Regex EmailPattern();
 
     [GeneratedRegex(
-        @"(?<!\w)(?:\+?\d[\d\s().\-]{5,}\d)(?!\w)",
-        RegexOptions.CultureInvariant)]
+        @"(?<!\w)(?:\+\d(?:[\s().\-]?\d){6,}|\d{1,4}(?:[\s().\-]\d{2,4}){2,})(?!\w)",
+        RegexOptions.CultureInvariant,
+        matchTimeoutMilliseconds: 100)]
     private static partial Regex PhonePattern();
 }

@@ -7,6 +7,10 @@ using System.Threading.Tasks;
 using GraphQL;
 using GraphQL.Execution;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Services;
 using Xunit;
@@ -175,6 +179,36 @@ public class XApiInProcessExecutorTests
     }
 
     [Fact]
+    public async Task UnhandledExceptionHandler_OmitsInputJsonWhenCaptureModeIsNone()
+    {
+        var logger = new CapturingLogger();
+        var telemetry = new UcpOperationTelemetry(
+            NullLogger<UcpOperationTelemetry>.Instance,
+            Options.Create(new UcpOptions
+            {
+                Observability = new UcpObservabilityOptions { InputCaptureMode = UcpInputCaptureMode.None },
+            }));
+        telemetry.Begin(ModuleConstants.Operations.SearchProducts, "rest");
+        var executor = new TestableXApiInProcessExecutor(logger, telemetry);
+        var exception = new NullReferenceException("resolver canary");
+        var context = new UnhandledExceptionContext(new ExecutionOptions(), exception);
+        using var activity = new Activity("XAPI XCatalog UcpSearchProducts").Start();
+
+        await executor.HandleUnhandledException(
+            context,
+            activity,
+            "XCatalog",
+            "UcpSearchProducts",
+            1,
+            variables: new Dictionary<string, object> { ["query"] = "private diagnostic query" });
+        telemetry.Complete();
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Null(entry.Properties["XApiInputJson"]);
+        Assert.DoesNotContain("private diagnostic query", entry.Properties.Values);
+    }
+
+    [Fact]
     public void RequestSnapshot_EnrichesXApiSpanWithBoundedDiagnosticInputWithoutPii()
     {
         var snapshot = XApiRequestTelemetrySnapshot.Create(new Dictionary<string, object>
@@ -293,8 +327,10 @@ public class XApiInProcessExecutorTests
         {
         }
 
-        public TestableXApiInProcessExecutor(ILogger<XApiInProcessExecutor> logger)
-            : base(new XApiDocumentExecuters(null, null, null), null, null, null, null, logger)
+        public TestableXApiInProcessExecutor(
+            ILogger<XApiInProcessExecutor> logger,
+            UcpOperationTelemetry operationTelemetry = null)
+            : base(new XApiDocumentExecuters(null, null, null), null, null, null, operationTelemetry, logger)
         {
         }
 

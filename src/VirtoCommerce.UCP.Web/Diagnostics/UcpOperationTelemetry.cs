@@ -5,7 +5,6 @@ using System.Text.Json;
 using System.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using OpenTelemetry.Trace;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Options;
@@ -13,12 +12,13 @@ using VirtoCommerce.UCP.Core.Services;
 
 namespace VirtoCommerce.UCP.Web.Diagnostics;
 
-public sealed class UcpOperationTelemetry
+public sealed class UcpOperationTelemetry : IUcpOperationTelemetry
 {
     private static readonly EventId OperationCompletedEvent = new(2000, "UcpOperationCompleted");
 
     private readonly ILogger<UcpOperationTelemetry> _logger;
     private readonly UcpInputCaptureMode _inputCaptureMode;
+    private readonly object _outcomeLock = new();
     private Activity _activity;
     private Stopwatch _stopwatch;
     private UcpOperationInputCapture _input;
@@ -57,30 +57,41 @@ public sealed class UcpOperationTelemetry
 
     public string TraceId => _traceId;
 
-    public void Begin(string operation, string transport)
+    public void Begin(string operation, string transport, ActivityContext? parentContext = null)
+    {
+        TryBegin(operation, transport, parentContext);
+    }
+
+    public bool TryBegin(string operation, string transport, ActivityContext? parentContext = null)
     {
         if (_stopwatch != null)
         {
-            throw new InvalidOperationException("A UCP operation is already active in this request scope.");
+            _logger.LogWarning(
+                "Skipping nested UCP telemetry operation {Operation}; {ActiveOperation} is already active in this request scope.",
+                operation,
+                _operation);
+            return false;
         }
 
         _operation = operation;
         _transport = transport;
-        _activity = UcpDiagnostics.StartOperation(operation, transport);
-        _traceId = (_activity ?? Activity.Current)?.TraceId.ToString();
-        _spanId = (_activity ?? Activity.Current)?.SpanId.ToString();
+        _activity = UcpDiagnostics.StartOperation(operation, transport, parentContext);
+        _traceId = _activity?.TraceId.ToString() ?? GetTraceId(parentContext);
+        _spanId = _activity?.SpanId.ToString() ?? GetSpanId(parentContext);
         _stopwatch = Stopwatch.StartNew();
+
+        return true;
     }
 
     public void CaptureMcpArguments(IDictionary<string, JsonElement> arguments)
     {
-        _input = UcpOperationInputCapture.CreateMcp(_operation, arguments);
+        _input = UcpOperationInputCapture.CreateMcp(_operation, arguments, IsInputCaptureEnabled);
         SetRequestActivityData();
     }
 
     public void CaptureRestArguments(IDictionary<string, object> arguments)
     {
-        _input = UcpOperationInputCapture.CreateRest(_operation, arguments);
+        _input = UcpOperationInputCapture.CreateRest(_operation, arguments, IsInputCaptureEnabled);
         SetRequestActivityData();
     }
 
@@ -105,7 +116,7 @@ public sealed class UcpOperationTelemetry
 
     public void CaptureXApiVariables(IDictionary<string, object> variables)
     {
-        CaptureXApiRequest(XApiRequestTelemetrySnapshot.Create(variables));
+        CaptureXApiRequest(XApiRequestTelemetrySnapshot.Create(variables, IsInputCaptureEnabled));
     }
 
     public int BeginXApiCall(bool isMutation)
@@ -142,20 +153,41 @@ public sealed class UcpOperationTelemetry
 
     public void MarkRejected(string errorCode)
     {
-        if (_outcome == "error")
+        lock (_outcomeLock)
         {
-            return;
+            if (_outcome == "error")
+            {
+                return;
+            }
+            _outcome = "rejected";
+            _errorType = nameof(UcpException);
+            _errorCode = errorCode;
         }
-        _outcome = "rejected";
-        _errorType = nameof(UcpException);
-        _errorCode = errorCode;
     }
 
     public void MarkError(string errorType, string errorCode = null)
     {
-        _outcome = "error";
-        _errorType = errorType;
-        _errorCode = errorCode;
+        lock (_outcomeLock)
+        {
+            _outcome = "error";
+            _errorType = errorType;
+            _errorCode = errorCode;
+        }
+    }
+
+    public void MarkDegraded(string errorType, string errorCode = null)
+    {
+        lock (_outcomeLock)
+        {
+            if (_outcome == "error" && _errorCode != "xapi_graphql_error")
+            {
+                return;
+            }
+
+            _outcome = "degraded";
+            _errorType = errorType;
+            _errorCode = errorCode;
+        }
     }
 
     public void MarkError(Exception exception, string errorCode = null)
@@ -167,13 +199,16 @@ public sealed class UcpOperationTelemetry
 
     public void MarkCanceled()
     {
-        if (_outcome == "error")
+        lock (_outcomeLock)
         {
-            return;
+            if (_outcome == "error")
+            {
+                return;
+            }
+            _outcome = "canceled";
+            _errorType = null;
+            _errorCode = null;
         }
-        _outcome = "canceled";
-        _errorType = null;
-        _errorCode = null;
     }
 
     public void Complete()
@@ -184,15 +219,25 @@ public sealed class UcpOperationTelemetry
         }
 
         _stopwatch.Stop();
-        _outcome ??= "success";
-        var inputJson = ShouldWriteInput() ? _input?.GetInputJson() : null;
-        SetTerminalActivityData(inputJson);
-        WriteTerminalLog(inputJson);
+        var outcome = GetTerminalOutcome();
+        var inputJson = ShouldWriteInput(outcome.Outcome) ? _input?.GetInputJson() : null;
+        SetTerminalActivityData(inputJson, outcome);
+        UcpDiagnostics.RecordOperation(
+            _operation,
+            _transport,
+            outcome.Outcome,
+            _xApiCallCount,
+            _xApiFailedCallCount,
+            _xApiGraphQlErrorCount,
+            _xApiCanceledCallCount,
+            _xApiMutationCallCount,
+            _xApiMutationFailedCallCount);
+        WriteTerminalLog(inputJson, outcome);
         _activity?.Dispose();
         _activity = null;
     }
 
-    private void SetTerminalActivityData(string inputJson)
+    private void SetTerminalActivityData(string inputJson, OperationOutcome outcome)
     {
         var activity = _activity;
         if (activity == null)
@@ -200,16 +245,16 @@ public sealed class UcpOperationTelemetry
             return;
         }
 
-        SetTerminalCounters(activity);
+        SetTerminalCounters(activity, outcome.Outcome);
         SetTerminalInput(activity, inputJson);
-        SetTerminalError(activity);
+        SetTerminalError(activity, outcome);
         SetRequestActivityData();
-        SetTerminalStatus(activity);
+        SetTerminalStatus(activity, outcome.Outcome);
     }
 
-    private void SetTerminalCounters(Activity activity)
+    private void SetTerminalCounters(Activity activity, string outcome)
     {
-        activity.SetTag("vc.ucp.outcome", _outcome);
+        activity.SetTag("vc.ucp.outcome", outcome);
         activity.SetTag("vc.xapi.call.count", _xApiCallCount);
         activity.SetTag("vc.xapi.failed_call.count", _xApiFailedCallCount);
         activity.SetTag("vc.xapi.graphql.error.count", _xApiGraphQlErrorCount);
@@ -236,22 +281,22 @@ public sealed class UcpOperationTelemetry
         }
     }
 
-    private void SetTerminalError(Activity activity)
+    private static void SetTerminalError(Activity activity, OperationOutcome outcome)
     {
-        if (!string.IsNullOrWhiteSpace(_errorType))
+        if (!string.IsNullOrWhiteSpace(outcome.ErrorType))
         {
-            activity.SetTag("error.type", _errorType);
+            activity.SetTag("error.type", outcome.ErrorType);
         }
 
-        if (!string.IsNullOrWhiteSpace(_errorCode))
+        if (!string.IsNullOrWhiteSpace(outcome.ErrorCode))
         {
-            activity.SetTag("vc.error.code", _errorCode);
+            activity.SetTag("vc.error.code", outcome.ErrorCode);
         }
     }
 
-    private void SetTerminalStatus(Activity activity)
+    private static void SetTerminalStatus(Activity activity, string outcome)
     {
-        if (_outcome == "error")
+        if (outcome == "error")
         {
             activity.SetStatus(ActivityStatusCode.Error, "UCP operation failed");
         }
@@ -278,7 +323,7 @@ public sealed class UcpOperationTelemetry
         _activity.SetTag("vc.ucp.request.reference.hash", _referenceHash);
     }
 
-    private void WriteTerminalLog(string inputJson)
+    private void WriteTerminalLog(string inputJson, OperationOutcome outcome)
     {
         const string message =
             "event:{EventName} schema_version:{TelemetrySchemaVersion} operation:{UcpOperation} transport:{UcpTransport} " +
@@ -293,29 +338,34 @@ public sealed class UcpOperationTelemetry
             "xapi_mutation_failed_call_count:{XApiMutationFailedCallCount} search_query_length:{SearchQueryLength} " +
             "search_query_hash:{SearchQueryHash} error_type:{ErrorType} error_code:{ErrorCode} trace_id:{TraceId} span_id:{SpanId}";
 
+        var logLevel = outcome.Outcome == "error" ? LogLevel.Error : LogLevel.Information;
+        if (!_logger.IsEnabled(logLevel))
+        {
+            return;
+        }
+
         var input = new OperationInputLogValues(_input);
         var values = new object[]
         {
             "ucp.operation.completed", 1, _operation, _transport, UcpDiagnostics.ModuleVersion,
-            _outcome, _stopwatch.ElapsedMilliseconds,
+            outcome.Outcome, _stopwatch.ElapsedMilliseconds,
             _inputCaptureMode.ToString(), inputJson, input.InputTruncated, input.TruncatedFields,
             input.ArgumentNames, _xApiVariableNames, input.RequestedStoreId,
             input.EffectiveStoreId, input.StoreSource, input.EffectiveCurrency, input.EffectiveCulture,
             _xApiCallCount, _xApiFailedCallCount, _xApiGraphQlErrorCount, _xApiCanceledCallCount,
             _xApiMutationCallCount, _xApiMutationFailedCallCount,
-            _searchQueryLength, _searchQueryHash, _errorType, _errorCode, _traceId, _spanId,
+            _searchQueryLength, _searchQueryHash, outcome.ErrorType, outcome.ErrorCode, _traceId, _spanId,
         };
 
-        var logLevel = _outcome == "error" ? LogLevel.Error : LogLevel.Information;
         _logger.Log(logLevel, OperationCompletedEvent, message, values);
     }
 
-    private bool ShouldWriteInput()
+    private bool ShouldWriteInput(string outcome)
     {
         return _inputCaptureMode switch
         {
             UcpInputCaptureMode.None => false,
-            UcpInputCaptureMode.ErrorsOnly => _outcome is "error" or "rejected" or "degraded",
+            UcpInputCaptureMode.ErrorsOnly => outcome is "error" or "rejected" or "degraded",
             _ => true,
         };
     }
@@ -329,6 +379,29 @@ public sealed class UcpOperationTelemetry
             _ => true,
         };
     }
+
+    internal bool IsInputCaptureEnabled => _inputCaptureMode != UcpInputCaptureMode.None;
+
+    private OperationOutcome GetTerminalOutcome()
+    {
+        lock (_outcomeLock)
+        {
+            _outcome ??= "success";
+            return new OperationOutcome(_outcome, _errorType, _errorCode);
+        }
+    }
+
+    private static string GetTraceId(ActivityContext? context)
+    {
+        return context is { TraceId: var traceId } && traceId != default ? traceId.ToString() : null;
+    }
+
+    private static string GetSpanId(ActivityContext? context)
+    {
+        return context is { SpanId: var spanId } && spanId != default ? spanId.ToString() : null;
+    }
+
+    private sealed record OperationOutcome(string Outcome, string ErrorType, string ErrorCode);
 
     private sealed class OperationInputLogValues
     {

@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using OpenTelemetry.Trace;
+using Microsoft.Extensions.Logging;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using VirtoCommerce.Platform.Core.Modularity;
 using VirtoCommerce.Platform.Core.Security;
@@ -47,16 +47,12 @@ public class Module : IModule, IHasConfiguration
         serviceCollection.Configure<SwaggerGenOptions>(options =>
             options.OperationFilter<UcpXApiResponseOperationFilter>());
         serviceCollection.AddScoped<UcpOperationTelemetry>();
+        serviceCollection.AddScoped<IUcpOperationTelemetry>(serviceProvider => serviceProvider.GetRequiredService<UcpOperationTelemetry>());
         if (observabilityOptions.EnableApplicationInsightsCompatibilityBridge)
         {
             serviceCollection.AddHostedService<UcpApplicationInsightsActivityBridge>();
         }
         serviceCollection.AddScoped<UcpMcpCallToolFilter>();
-        serviceCollection.ConfigureOpenTelemetryTracerProvider(tracing =>
-        {
-            tracing.AddSource(UcpDiagnostics.ActivitySourceName);
-            tracing.AddSource(UcpDiagnostics.McpActivitySourceName);
-        });
         serviceCollection
             .AddMcpServer(options =>
             {
@@ -108,6 +104,16 @@ public class Module : IModule, IHasConfiguration
     {
         var serviceProvider = appBuilder.ApplicationServices;
 
+        var observabilityOptions = Configuration
+            .GetSection("UCP:Observability")
+            .Get<UcpObservabilityOptions>() ?? new UcpObservabilityOptions();
+        if (observabilityOptions.EnableApplicationInsightsCompatibilityBridge && HasConfiguredOtelExporter(Configuration))
+        {
+            serviceProvider.GetRequiredService<ILogger<Module>>().LogWarning(
+                "The UCP Application Insights compatibility bridge and an OpenTelemetry exporter are both configured. " +
+                "Disable UCP:Observability:EnableApplicationInsightsCompatibilityBridge when both pipelines export to the same Application Insights resource to avoid duplicate dependencies.");
+        }
+
         var settingsRegistrar = serviceProvider.GetRequiredService<ISettingsRegistrar>();
         settingsRegistrar.RegisterSettings(ModuleConstants.Settings.AllSettings, ModuleInfo.Id);
 
@@ -115,6 +121,13 @@ public class Module : IModule, IHasConfiguration
         permissionsRegistrar.RegisterPermissions(ModuleInfo.Id, "UCP", ModuleConstants.Security.Permissions.AllPermissions);
 
         appBuilder.UseScopedSchema<XapiAssemblyMarker>("ucp");
+    }
+
+    internal static bool HasConfiguredOtelExporter(IConfiguration configuration)
+    {
+        return !string.IsNullOrWhiteSpace(configuration["OpenTelemetry:Endpoint"])
+            || !string.IsNullOrWhiteSpace(configuration["OTEL_EXPORTER_OTLP_ENDPOINT"])
+            || !string.IsNullOrWhiteSpace(configuration["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"]);
     }
 
     public void Uninstall()

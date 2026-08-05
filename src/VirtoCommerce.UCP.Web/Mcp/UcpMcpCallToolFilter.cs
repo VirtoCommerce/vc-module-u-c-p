@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -7,6 +8,7 @@ using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Web.Diagnostics;
 
@@ -38,29 +40,46 @@ public sealed class UcpMcpCallToolFilter
             return await next(context, cancellationToken);
         }
 
-        _operationTelemetry.Begin(toolName, "mcp");
-        _operationTelemetry.CaptureMcpArguments(context.Params?.Arguments);
-        var traceId = _operationTelemetry.TraceId;
+        var parentActivity = Activity.Current?.Source.Name == UcpDiagnostics.McpActivitySourceName
+            ? Activity.Current
+            : null;
+        var telemetryStarted = _operationTelemetry.TryBegin(toolName, "mcp", parentActivity?.Context);
+        if (telemetryStarted)
+        {
+            _operationTelemetry.CaptureMcpArguments(context.Params?.Arguments);
+        }
+        var traceId = telemetryStarted
+            ? _operationTelemetry.TraceId
+            : parentActivity?.TraceId.ToString();
         try
         {
             var result = await next(context, cancellationToken);
             if (result.IsError == true)
             {
-                _operationTelemetry.MarkRejected("mcp_tool_error");
+                if (telemetryStarted)
+                {
+                    _operationTelemetry.MarkRejected("mcp_tool_error");
+                }
             }
 
             return AddTraceMetadata(result, traceId);
         }
         catch (XApiResponseException exception)
         {
-            _operationTelemetry.MarkError(nameof(XApiResponseException), "xapi_graphql_error");
+            if (telemetryStarted)
+            {
+                _operationTelemetry.MarkError(nameof(XApiResponseException), "xapi_graphql_error");
+            }
             return AddTraceMetadata(UcpMcpErrorResultFactory.FromXApi(exception), traceId);
         }
         catch (UcpException exception)
         {
             if (exception.StatusCode >= StatusCodes.Status500InternalServerError)
             {
-                _operationTelemetry.MarkError(exception, exception.Code);
+                if (telemetryStarted)
+                {
+                    _operationTelemetry.MarkError(exception, exception.Code);
+                }
                 _logger.LogError(
                     McpOperationExceptionEvent,
                     exception,
@@ -72,19 +91,28 @@ public sealed class UcpMcpCallToolFilter
             }
             else
             {
-                _operationTelemetry.MarkRejected(exception.Code);
+                if (telemetryStarted)
+                {
+                    _operationTelemetry.MarkRejected(exception.Code);
+                }
             }
 
             return AddTraceMetadata(UcpMcpErrorResultFactory.FromUcp(exception), traceId);
         }
         catch (OperationCanceledException)
         {
-            _operationTelemetry.MarkCanceled();
+            if (telemetryStarted)
+            {
+                _operationTelemetry.MarkCanceled();
+            }
             throw;
         }
         catch (Exception exception)
         {
-            _operationTelemetry.MarkError(exception);
+            if (telemetryStarted)
+            {
+                _operationTelemetry.MarkError(exception);
+            }
             _logger.LogError(
                 McpOperationExceptionEvent,
                 exception,
@@ -96,7 +124,10 @@ public sealed class UcpMcpCallToolFilter
         }
         finally
         {
-            _operationTelemetry.Complete();
+            if (telemetryStarted)
+            {
+                _operationTelemetry.Complete();
+            }
         }
     }
 
