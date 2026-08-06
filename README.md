@@ -512,7 +512,7 @@ Direct dependency spans record `vc.dependency.outcome`. Successful dependencies 
 
 - `ErrorsOnly` (default): write the allowlisted input only for `error`, `rejected`, or `degraded` outcomes;
 - `Always`: write it for successful and failed operations;
-- `None`: omit `InputJson` while retaining normal trace attributes and counters.
+- `None`: omit `InputJson` and raw diagnostic query/filter values while retaining bounded operational context, derived length/hash tags, and counters.
 
 Production Platform configuration must allow `Information` for the `VirtoCommerce.UCP` category, otherwise successful/rejected/canceled terminal events are filtered before any exporter sees them:
 

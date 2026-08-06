@@ -81,11 +81,18 @@ public abstract class UcpServiceBase
         return FirstNotEmpty(GetHeader(ModuleConstants.Headers.CorrelationId), _httpContextAccessor.HttpContext?.TraceIdentifier);
     }
 
+    /// <summary>
+    /// Creates a UCP exception without an inner exception. This overload is retained for compatibility.
+    /// Override the four-parameter overload to customize all exception creation performed by this base class.
+    /// </summary>
     protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
     {
         return CreateException(code, message, statusCode, null);
     }
 
+    /// <summary>
+    /// Creates a UCP exception. Override this overload to customize all exception creation performed by this base class.
+    /// </summary>
     protected virtual UcpException CreateException(string code, string message, int statusCode, Exception innerException)
     {
         var exception = new UcpException(code, message, statusCode, innerException);

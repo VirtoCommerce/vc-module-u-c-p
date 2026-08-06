@@ -98,6 +98,22 @@ public class XApiInProcessExecutorTests
     }
 
     [Fact]
+    public void GetOperationType_DoesNotCacheUnboundedDynamicQueries()
+    {
+        for (var index = 0; index < XApiInProcessExecutor.MaxCachedOperationTypes * 2; index++)
+        {
+            var query = $"query DynamicOperation{index} {{ __typename }}";
+
+            Assert.Equal("query", TestableXApiInProcessExecutor.ClassifyOperation(query));
+        }
+
+        Assert.InRange(
+            XApiInProcessExecutor.CachedOperationTypeCount,
+            1,
+            XApiInProcessExecutor.MaxCachedOperationTypes);
+    }
+
+    [Fact]
     public async Task UnhandledExceptionHandler_LogsOriginalTechnicalExceptionOnceWithCorrelationData()
     {
         var logger = new CapturingLogger();
@@ -235,6 +251,25 @@ public class XApiInProcessExecutorTests
         Assert.DoesNotContain("secret@example.com", inputJson, StringComparison.Ordinal);
         Assert.DoesNotContain("555 123 4567", inputJson, StringComparison.Ordinal);
         Assert.DoesNotContain("buyer-secret@example.com", inputJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RequestSnapshot_WithoutInputPayload_RetainsOnlySafeDerivedSearchTags()
+    {
+        var snapshot = XApiRequestTelemetrySnapshot.Create(
+            new Dictionary<string, object>
+            {
+                ["query"] = "private@example.com +1 555 123 4567",
+            },
+            captureInputValues: false);
+        using var activity = new Activity("XAPI XCatalog UcpSearchProducts").Start();
+
+        snapshot.Enrich(activity);
+
+        Assert.Null(snapshot.SafeInputJson);
+        Assert.Equal(35, activity.GetTagItem("vc.catalog.search.query.length"));
+        Assert.NotNull(activity.GetTagItem("vc.catalog.search.query.hash"));
+        Assert.Null(activity.GetTagItem("vc.catalog.search.query"));
     }
 
     [Fact]

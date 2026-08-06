@@ -40,6 +40,8 @@ internal sealed class XApiRequestTelemetrySnapshot
         var command = GetDictionary(variables, "command");
         var searchQuery = GetString(variables, "query");
         var searchFilter = GetString(variables, "filter");
+        // InputCaptureMode.None suppresses the payload, but intentionally retains bounded operational
+        // context and derived tags such as query length/hash for traces, logs, and correlation.
         var diagnosticSearchQuery = SanitizeDiagnosticText(searchQuery);
         var storeId = FirstNotEmpty(GetString(variables, "storeId"), GetString(command, "storeId"));
         var currency = FirstNotEmpty(GetString(variables, "currencyCode"), GetString(command, "currencyCode"));

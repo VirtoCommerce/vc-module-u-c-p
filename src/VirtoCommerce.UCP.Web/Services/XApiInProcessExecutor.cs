@@ -29,9 +29,13 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private const int MaxGraphQlErrorMessageLength = 256;
     private const int MaxGraphQlPathSegments = 10;
     private const int MaxGraphQlPathLength = 256;
+    internal const int MaxCachedOperationTypes = 128;
     private static readonly EventId GraphQlResolverExceptionEvent = new(2001, "XApiGraphQlResolverException");
     private static readonly ConcurrentDictionary<(string Query, string OperationName), string> OperationTypes = new();
+    private static readonly object OperationTypesLock = new();
     private static readonly ConcurrentDictionary<Type, string> SchemaVersions = new();
+
+    internal static int CachedOperationTypeCount => OperationTypes.Count;
 
     private readonly XApiDocumentExecuters _documentExecuters;
     private readonly IGraphQLTextSerializer _graphQlSerializer;
@@ -251,7 +255,27 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
 
     protected static string GetOperationType(string query, string operationName)
     {
-        return OperationTypes.GetOrAdd((query, operationName), key => ParseOperationType(key.Query, key.OperationName));
+        var key = (query, operationName);
+        if (OperationTypes.TryGetValue(key, out var operationType))
+        {
+            return operationType;
+        }
+
+        operationType = ParseOperationType(query, operationName);
+        lock (OperationTypesLock)
+        {
+            if (OperationTypes.TryGetValue(key, out var cachedOperationType))
+            {
+                return cachedOperationType;
+            }
+
+            if (OperationTypes.Count < MaxCachedOperationTypes)
+            {
+                OperationTypes.TryAdd(key, operationType);
+            }
+        }
+
+        return operationType;
     }
 
     private static string ParseOperationType(string query, string operationName)
