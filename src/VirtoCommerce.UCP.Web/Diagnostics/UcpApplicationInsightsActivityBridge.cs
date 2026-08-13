@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.Threading;
@@ -16,6 +17,7 @@ internal sealed class UcpApplicationInsightsActivityBridge : IHostedService, IDi
 {
     private const int MaxPropertyKeyLength = 150;
     private const int MaxPropertyValueLength = 8192;
+    private const string ExceptionEventName = "exception";
     private static readonly EventId ExportFailedEvent = new(2004, "UcpApplicationInsightsActivityExportFailed");
 
     private readonly IServiceProvider _serviceProvider;
@@ -92,6 +94,12 @@ internal sealed class UcpApplicationInsightsActivityBridge : IHostedService, IDi
         try
         {
             telemetryClient.TrackDependency(CreateDependencyTelemetry(activity));
+
+            var exception = UcpActivityExceptionRecorder.GetOriginalException(activity);
+            if (exception != null)
+            {
+                telemetryClient.TrackException(CreateExceptionTelemetry(activity, exception));
+            }
         }
         catch (Exception exception)
         {
@@ -143,7 +151,54 @@ internal sealed class UcpApplicationInsightsActivityBridge : IHostedService, IDi
             }
         }
 
+        CopyExceptionEventProperties(activity, telemetry.Properties);
+
         return telemetry;
+    }
+
+    private static ExceptionTelemetry CreateExceptionTelemetry(Activity activity, Exception exception)
+    {
+        var telemetry = new ExceptionTelemetry(exception)
+        {
+            Timestamp = new DateTimeOffset(activity.StartTimeUtc.Add(activity.Duration)),
+            SeverityLevel = SeverityLevel.Error,
+        };
+        telemetry.Context.Operation.Id = activity.TraceId.ToString();
+        telemetry.Context.Operation.ParentId = activity.SpanId.ToString();
+
+        return telemetry;
+    }
+
+    private static void CopyExceptionEventProperties(Activity activity, IDictionary<string, string> properties)
+    {
+        foreach (var activityEvent in activity.Events)
+        {
+            if (activityEvent.Name != ExceptionEventName)
+            {
+                continue;
+            }
+
+            foreach (var tag in activityEvent.Tags)
+            {
+                if (!IsStandardExceptionTag(tag.Key) || tag.Value == null)
+                {
+                    continue;
+                }
+
+                var value = Convert.ToString(tag.Value, CultureInfo.InvariantCulture);
+                if (!string.IsNullOrEmpty(value))
+                {
+                    properties[tag.Key] = Truncate(value, MaxPropertyValueLength);
+                }
+            }
+
+            return;
+        }
+    }
+
+    private static bool IsStandardExceptionTag(string tagName)
+    {
+        return tagName is "exception.type" or "exception.message" or "exception.stacktrace";
     }
 
     private static bool IsSafeUcpTag(Activity activity, string tagName)

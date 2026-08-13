@@ -136,6 +136,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         activity?.SetTag("vc.xapi.schema.version", schemaVersion);
 
         return new XApiCallTelemetryContext(
+            schema,
             operationName,
             isMutation,
             callIndex,
@@ -183,6 +184,9 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         if (call.ErrorCount > 0)
         {
             SetGraphQlErrorData(call.Activity, executionResult);
+            RecordUnhandledGraphQlExceptions(
+                executionResult,
+                CreateExceptionTelemetryContext(call));
         }
 
         var result = new XApiExecutionResult
@@ -193,6 +197,18 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         call.Completed = true;
 
         return result;
+    }
+
+    private GraphQlExceptionTelemetryContext CreateExceptionTelemetryContext(XApiCallTelemetryContext call)
+    {
+        return new GraphQlExceptionTelemetryContext(
+            call.Activity,
+            call.Schema,
+            call.OperationName,
+            call.CallIndex,
+            call.RequestSnapshot,
+            call.SchemaVersion,
+            call.ExceptionLogState);
     }
 
     private ContentTypeState SetJsonContentType()
@@ -233,7 +249,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             return;
         }
 
-        activity.AddException(exception);
+        UcpActivityExceptionRecorder.Record(activity, exception);
         activity.SetTag("error.type", exception.GetType().FullName);
         activity.SetStatus(ActivityStatusCode.Error, exception.GetType().Name);
     }
@@ -336,7 +352,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         var exception = context.OriginalException;
         if (exception != null && telemetry.LogState.ShouldLog(exception))
         {
-            LogUnhandledGraphQlException(context, telemetry, exception);
+            LogUnhandledGraphQlException(GetErrorPath(context), telemetry, exception);
         }
 
         if (existingHandler != null)
@@ -345,8 +361,30 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         }
     }
 
+    protected virtual void RecordUnhandledGraphQlExceptions(
+        ExecutionResult executionResult,
+        GraphQlExceptionTelemetryContext telemetry)
+    {
+        if (executionResult.Errors == null)
+        {
+            return;
+        }
+
+        foreach (var error in executionResult.Errors)
+        {
+            if (error is not GraphQL.Execution.UnhandledError { InnerException: { } exception } ||
+                !telemetry.LogState.ShouldLog(exception))
+            {
+                continue;
+            }
+
+            var errorPath = error.Path == null ? null : GetBoundedPath(error.Path);
+            LogUnhandledGraphQlException(errorPath, telemetry, exception);
+        }
+    }
+
     private void LogUnhandledGraphQlException(
-        GraphQL.Execution.UnhandledExceptionContext context,
+        string errorPath,
         GraphQlExceptionTelemetryContext telemetry,
         Exception exception)
     {
@@ -354,13 +392,12 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         var inputJson = (_operationTelemetry?.ShouldWriteXApiInput(failed: true) ?? true)
             ? requestSnapshot.SafeInputJson
             : null;
-        var errorPath = GetErrorPath(context);
         var (traceId, spanId) = GetTraceIdentifiers(telemetry.Activity);
 
         if (telemetry.Activity != null)
         {
             telemetry.Activity.SetTag("error.type", exception.GetType().FullName);
-            telemetry.Activity.AddException(exception);
+            UcpActivityExceptionRecorder.Record(telemetry.Activity, exception);
         }
 
         _logger.LogError(
@@ -454,6 +491,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
     private sealed class XApiCallTelemetryContext
     {
         public XApiCallTelemetryContext(
+            string schema,
             string operationName,
             bool isMutation,
             int callIndex,
@@ -461,6 +499,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             string schemaVersion,
             Activity activity)
         {
+            Schema = schema;
             OperationName = operationName;
             IsMutation = isMutation;
             CallIndex = callIndex;
@@ -469,6 +508,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
             Activity = activity;
         }
 
+        public string Schema { get; }
         public string OperationName { get; }
         public bool IsMutation { get; }
         public int CallIndex { get; }

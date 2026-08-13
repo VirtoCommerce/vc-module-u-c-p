@@ -6,10 +6,16 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using GraphQL;
 using GraphQL.Execution;
+using Microsoft.ApplicationInsights;
+using Microsoft.ApplicationInsights.Channel;
+using Microsoft.ApplicationInsights.DataContracts;
+using Microsoft.ApplicationInsights.Extensibility;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Web.Diagnostics;
 using VirtoCommerce.UCP.Web.Services;
@@ -353,6 +359,140 @@ public class XApiInProcessExecutorTests
         Assert.Single(logger.Entries);
     }
 
+    [Fact]
+    public async Task UnhandledExceptionHandler_ExportsOriginalExceptionThroughApplicationInsightsBridge()
+    {
+        var channel = new CapturingTelemetryChannel();
+        using var telemetryConfiguration = TelemetryConfiguration.CreateDefault();
+        telemetryConfiguration.TelemetryChannel = channel;
+        var telemetryClient = new TelemetryClient(telemetryConfiguration);
+        await using var serviceProvider = new ServiceCollection()
+            .AddSingleton(telemetryClient)
+            .BuildServiceProvider();
+        using var bridge = new UcpApplicationInsightsActivityBridge(
+            serviceProvider,
+            NullLogger<UcpApplicationInsightsActivityBridge>.Instance);
+        await bridge.StartAsync(TestContext.Current.CancellationToken);
+
+        var logger = new CapturingLogger();
+        var executor = new TestableXApiInProcessExecutor(logger);
+        var expected = CreateExceptionWithStackTrace();
+        var context = new UnhandledExceptionContext(new ExecutionOptions(), expected);
+        Activity activity;
+        using (activity = UcpDiagnostics.StartXApi("XCatalog", "UcpSearchProducts", "query", 1))
+        {
+            Assert.NotNull(activity);
+            await executor.HandleUnhandledException(context, activity, "XCatalog", "UcpSearchProducts", 1);
+            executor.RecordUnhandledExceptions(
+                new ExecutionResult
+                {
+                    Errors = new ExecutionErrors
+                    {
+                        new UnhandledError("Error trying to resolve field 'products'.", expected),
+                    },
+                },
+                activity,
+                "XCatalog",
+                "UcpSearchProducts",
+                1);
+            activity.SetTag("vc.xapi.error.codes", "NULL_REFERENCE");
+            activity.SetStatus(ActivityStatusCode.Error, "GraphQL errors");
+        }
+
+        await bridge.StopAsync(TestContext.Current.CancellationToken);
+
+        var dependency = Assert.Single(
+            channel.Items.OfType<DependencyTelemetry>(),
+            item => item.Id == activity.SpanId.ToString());
+        Assert.Equal(typeof(NullReferenceException).FullName, dependency.Properties["exception.type"]);
+        Assert.Equal(expected.Message, dependency.Properties["exception.message"]);
+        Assert.Contains(nameof(CreateExceptionWithStackTrace), dependency.Properties["exception.stacktrace"], StringComparison.Ordinal);
+
+        var exceptionTelemetry = Assert.Single(channel.Items.OfType<ExceptionTelemetry>());
+        Assert.Same(expected, exceptionTelemetry.Exception);
+        Assert.Equal(activity.TraceId.ToString(), exceptionTelemetry.Context.Operation.Id);
+        Assert.Equal(activity.SpanId.ToString(), exceptionTelemetry.Context.Operation.ParentId);
+    }
+
+    [Fact]
+    public async Task ApplicationInsightsBridge_DoesNotInventExceptionForExpectedGraphQlError()
+    {
+        var channel = new CapturingTelemetryChannel();
+        using var telemetryConfiguration = TelemetryConfiguration.CreateDefault();
+        telemetryConfiguration.TelemetryChannel = channel;
+        var telemetryClient = new TelemetryClient(telemetryConfiguration);
+        await using var serviceProvider = new ServiceCollection()
+            .AddSingleton(telemetryClient)
+            .BuildServiceProvider();
+        using var bridge = new UcpApplicationInsightsActivityBridge(
+            serviceProvider,
+            NullLogger<UcpApplicationInsightsActivityBridge>.Instance);
+        await bridge.StartAsync(TestContext.Current.CancellationToken);
+
+        Activity activity;
+        using (activity = UcpDiagnostics.StartXApi("XCatalog", "UcpSearchProducts", "query", 1))
+        {
+            Assert.NotNull(activity);
+            activity.SetTag("vc.xapi.error.codes", "VALIDATION_ERROR");
+            activity.SetStatus(ActivityStatusCode.Error, "GraphQL errors");
+        }
+
+        await bridge.StopAsync(TestContext.Current.CancellationToken);
+
+        var dependency = Assert.Single(
+            channel.Items.OfType<DependencyTelemetry>(),
+            item => item.Id == activity.SpanId.ToString());
+        Assert.DoesNotContain("exception.type", dependency.Properties.Keys);
+        Assert.DoesNotContain("exception.message", dependency.Properties.Keys);
+        Assert.DoesNotContain("exception.stacktrace", dependency.Properties.Keys);
+        Assert.Empty(channel.Items.OfType<ExceptionTelemetry>());
+    }
+
+    [Fact]
+    public void ExecutionResultFallback_RecordsOriginalUnhandledExceptionWhenCallbackWasSkipped()
+    {
+        var logger = new CapturingLogger();
+        var executor = new TestableXApiInProcessExecutor(logger);
+        var expected = CreateExceptionWithStackTrace();
+        var executionResult = new ExecutionResult
+        {
+            Errors = new ExecutionErrors
+            {
+                new UnhandledError("Error trying to resolve field 'products'.", expected),
+            },
+        };
+        using var activity = new Activity("XAPI XCatalog UcpSearchProducts").Start();
+
+        executor.RecordUnhandledExceptions(executionResult, activity, "XCatalog", "UcpSearchProducts", 1);
+
+        var entry = Assert.Single(logger.Entries);
+        Assert.Equal(2001, entry.EventId.Id);
+        Assert.Same(expected, entry.Exception);
+        Assert.Same(expected, UcpActivityExceptionRecorder.GetOriginalException(activity));
+        Assert.Single(activity.Events, value => value.Name == "exception");
+    }
+
+    [Fact]
+    public void ExecutionResultFallback_DoesNotTreatExpectedGraphQlErrorAsClrException()
+    {
+        var logger = new CapturingLogger();
+        var executor = new TestableXApiInProcessExecutor(logger);
+        var executionResult = new ExecutionResult
+        {
+            Errors = new ExecutionErrors
+            {
+                new ExecutionError("Expected validation error."),
+            },
+        };
+        using var activity = new Activity("XAPI XCatalog UcpSearchProducts").Start();
+
+        executor.RecordUnhandledExceptions(executionResult, activity, "XCatalog", "UcpSearchProducts", 1);
+
+        Assert.Empty(logger.Entries);
+        Assert.Empty(activity.Events);
+        Assert.Null(UcpActivityExceptionRecorder.GetOriginalException(activity));
+    }
+
     private sealed class TestableXApiInProcessExecutor : XApiInProcessExecutor
     {
         private readonly GraphQlExceptionLogState _logState = new();
@@ -398,6 +538,25 @@ public class XApiInProcessExecutorTests
                 telemetry,
                 existingHandler);
         }
+
+        public void RecordUnhandledExceptions(
+            ExecutionResult executionResult,
+            Activity activity,
+            string schema,
+            string operationName,
+            int callIndex)
+        {
+            var telemetry = new GraphQlExceptionTelemetryContext(
+                activity,
+                schema,
+                operationName,
+                callIndex,
+                requestVariables: null,
+                schemaVersion: "3.1015.0+test",
+                _logState);
+
+            RecordUnhandledGraphQlExceptions(executionResult, telemetry);
+        }
     }
 
     private static NullReferenceException CreateExceptionWithStackTrace()
@@ -441,6 +600,28 @@ public class XApiInProcessExecutorTests
     }
 
     private sealed record LogEntry(LogLevel Level, EventId EventId, Exception Exception, IReadOnlyDictionary<string, object> Properties);
+
+    private sealed class CapturingTelemetryChannel : ITelemetryChannel
+    {
+        public List<ITelemetry> Items { get; } = [];
+
+        public bool? DeveloperMode { get; set; }
+
+        public string EndpointAddress { get; set; }
+
+        public void Send(ITelemetry item)
+        {
+            Items.Add(item);
+        }
+
+        public void Flush()
+        {
+        }
+
+        public void Dispose()
+        {
+        }
+    }
 
     private sealed class NullScope : IDisposable
     {
