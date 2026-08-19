@@ -40,14 +40,14 @@ public sealed class UcpMcpCallToolFilter
             return await next(context, cancellationToken);
         }
 
-        return await InvokeUcpToolAsync(next, context, cancellationToken, toolName);
+        return await InvokeUcpToolAsync(next, context, toolName, cancellationToken);
     }
 
     private async ValueTask<CallToolResult> InvokeUcpToolAsync(
         McpRequestHandler<CallToolRequestParams, CallToolResult> next,
         RequestContext<CallToolRequestParams> context,
-        CancellationToken cancellationToken,
-        string toolName)
+        string toolName,
+        CancellationToken cancellationToken)
     {
         var parentActivity = Activity.Current?.Source.Name == UcpDiagnostics.McpActivitySourceName
             ? Activity.Current

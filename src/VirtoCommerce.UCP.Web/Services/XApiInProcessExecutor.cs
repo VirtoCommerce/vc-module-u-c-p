@@ -199,7 +199,7 @@ public class XApiInProcessExecutor : IXApiInProcessExecutor
         return result;
     }
 
-    private GraphQlExceptionTelemetryContext CreateExceptionTelemetryContext(XApiCallTelemetryContext call)
+    private static GraphQlExceptionTelemetryContext CreateExceptionTelemetryContext(XApiCallTelemetryContext call)
     {
         return new GraphQlExceptionTelemetryContext(
             call.Activity,
