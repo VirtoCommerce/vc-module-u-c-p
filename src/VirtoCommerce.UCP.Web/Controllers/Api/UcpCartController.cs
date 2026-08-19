@@ -2,8 +2,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
+using VirtoCommerce.UCP.Web.Filters;
 using VirtoCommerce.UCP.Web.Models;
 
 namespace VirtoCommerce.UCP.Web.Controllers.Api;
@@ -20,18 +22,18 @@ public class UcpCartController : ControllerBase
     }
 
     [HttpPost]
+    [UcpOperation(ModuleConstants.Operations.CreateCart, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpCartResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> CreateCart([FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _cartService.CreateCart(request, cancellationToken));
     }
 
     [HttpGet]
+    [UcpOperation(ModuleConstants.Operations.ListCarts, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpCartListResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartListResponse>> ListCarts(
         [FromQuery] UcpCartListQuery query,
         CancellationToken cancellationToken)
@@ -40,10 +42,10 @@ public class UcpCartController : ControllerBase
     }
 
     [HttpGet("{cartId}")]
+    [UcpOperation(ModuleConstants.Operations.GetCart, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpCartResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> GetCart(
         string cartId,
         [FromQuery] UcpCartQuery query,
@@ -54,10 +56,10 @@ public class UcpCartController : ControllerBase
 
     [HttpPut("{cartId}")]
     [HttpPatch("{cartId}")]
+    [UcpOperation(ModuleConstants.Operations.UpdateCart, IsXApiBacked = true)]
     [ProducesResponseType(typeof(UcpCartResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
-    [ProducesResponseType(typeof(UcpError), StatusCodes.Status502BadGateway)]
     public async Task<ActionResult<UcpCartResponse>> UpdateCart(string cartId, [FromBody] UcpCartRequest request, CancellationToken cancellationToken)
     {
         return Ok(await _cartService.UpdateCart(cartId, request, cancellationToken));

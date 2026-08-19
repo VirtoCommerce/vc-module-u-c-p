@@ -3,10 +3,8 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
-using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
@@ -549,22 +547,7 @@ public static class UcpMcpCommerceTools
 
     private static async Task<object> Execute<T>(Func<Task<T>> action)
     {
-        try
-        {
-            return await action();
-        }
-        catch (UcpException exception)
-        {
-            var error = new UcpMcpToolError
-            {
-                IsError = true,
-                Code = exception.Code,
-                StatusCode = exception.StatusCode,
-                Message = exception.Message,
-            };
-
-            throw new McpException(JsonSerializer.Serialize(error), exception);
-        }
+        return await action();
     }
 
     private static UcpCartRequest CreateCartRequest(CartToolArguments arguments)

@@ -2,8 +2,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
+using VirtoCommerce.UCP.Web.Filters;
 
 namespace VirtoCommerce.UCP.Web.Controllers.Api;
 
@@ -19,6 +21,7 @@ public class UcpGeographyController : ControllerBase
     }
 
     [HttpGet("countries")]
+    [UcpOperation(ModuleConstants.Operations.ListCountries)]
     [ProducesResponseType(typeof(UcpCountriesResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UcpCountriesResponse>> ListCountries(
@@ -34,6 +37,7 @@ public class UcpGeographyController : ControllerBase
     }
 
     [HttpGet("countries/resolve")]
+    [UcpOperation(ModuleConstants.Operations.ResolveCountry)]
     [ProducesResponseType(typeof(UcpCountryResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]
@@ -45,6 +49,7 @@ public class UcpGeographyController : ControllerBase
     }
 
     [HttpGet("countries/{countryId}/regions")]
+    [UcpOperation(ModuleConstants.Operations.ListRegions)]
     [ProducesResponseType(typeof(UcpRegionsResponse), StatusCodes.Status200OK)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(UcpError), StatusCodes.Status404NotFound)]

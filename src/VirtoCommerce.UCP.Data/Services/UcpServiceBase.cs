@@ -4,7 +4,9 @@ using System.Linq;
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Core.Diagnostics;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Services;
 
@@ -79,9 +81,21 @@ public abstract class UcpServiceBase
         return FirstNotEmpty(GetHeader(ModuleConstants.Headers.CorrelationId), _httpContextAccessor.HttpContext?.TraceIdentifier);
     }
 
+    /// <summary>
+    /// Creates a UCP exception without an inner exception. This overload is retained for compatibility.
+    /// Override the four-parameter overload to customize all exception creation performed by this base class.
+    /// </summary>
     protected virtual UcpException CreateException(string code, string message, int statusCode = StatusCodes.Status400BadRequest)
     {
-        var exception = new UcpException(code, message, statusCode);
+        return CreateException(code, message, statusCode, null);
+    }
+
+    /// <summary>
+    /// Creates a UCP exception. Override this overload to customize all exception creation performed by this base class.
+    /// </summary>
+    protected virtual UcpException CreateException(string code, string message, int statusCode, Exception innerException)
+    {
+        var exception = new UcpException(code, message, statusCode, innerException);
         exception.Error.CorrelationId = GetCorrelationId();
 
         return exception;
@@ -104,55 +118,116 @@ public abstract class UcpServiceBase
         };
     }
 
+    protected virtual JsonDocument ParseGraphQlResult(XApiExecutionResult result, string source)
+    {
+        return ParseGraphQlResult(result, source, null);
+    }
+
     protected virtual JsonDocument ParseGraphQlResult(
         XApiExecutionResult result,
         string source,
-        Func<JsonElement, bool> canTolerateError = null)
+        Func<JsonElement, bool> canTolerateError)
     {
         if (result == null || string.IsNullOrWhiteSpace(result.Json))
         {
-            throw CreateException(ModuleConstants.ErrorCodes.XApiExecutionFailed, $"{source} returned an empty response.", StatusCodes.Status502BadGateway);
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an empty response.", StatusCodes.Status500InternalServerError);
         }
 
-        var document = JsonDocument.Parse(result.Json);
-        var hasErrors = TryGetGraphQlErrors(document.RootElement, out var errors);
-
-        if (HasBlockingGraphQlErrors(errors, canTolerateError) || IsFailedWithoutGraphQlErrors(result, hasErrors))
+        JsonDocument document;
+        try
         {
-            var message = GetGraphQlErrorMessage(errors, source);
-
-            document.Dispose();
-            throw CreateException(ModuleConstants.ErrorCodes.XApiExecutionFailed, message, StatusCodes.Status502BadGateway);
+            document = JsonDocument.Parse(result.Json);
+        }
+        catch (JsonException exception)
+        {
+            throw CreateException(
+                ModuleConstants.ErrorCodes.XApiInvalidResponse,
+                $"{source} returned invalid JSON.",
+                StatusCodes.Status500InternalServerError,
+                exception);
         }
 
-        return document;
+        try
+        {
+            ValidateGraphQlResult(document, result, source, canTolerateError);
+            return document;
+        }
+        catch
+        {
+            document.Dispose();
+            throw;
+        }
     }
 
-    private static bool TryGetGraphQlErrors(JsonElement root, out JsonElement errors)
+    private void ValidateGraphQlResult(
+        JsonDocument document,
+        XApiExecutionResult result,
+        string source,
+        Func<JsonElement, bool> canTolerateError)
     {
-        return root.TryGetProperty("errors", out errors) &&
-            errors.ValueKind == JsonValueKind.Array &&
-            errors.GetArrayLength() > 0;
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a non-object GraphQL response.", StatusCodes.Status500InternalServerError);
+        }
+
+        var errorCount = GetGraphQlErrorCount(root, source, out var errors);
+        if (HasBlockingErrors(errors, errorCount, canTolerateError))
+        {
+            throw new XApiResponseException(source, result, errorCount);
+        }
+
+        if (!result.Succeeded && errorCount == 0)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} failed without a GraphQL error response.", StatusCodes.Status500InternalServerError);
+        }
+
+        EnsureObjectData(root, source);
+        MarkDegradedForRecoverableErrors(errorCount);
     }
 
-    private static bool HasBlockingGraphQlErrors(JsonElement errors, Func<JsonElement, bool> canTolerateError)
+    private int GetGraphQlErrorCount(JsonElement root, string source, out JsonElement errors)
     {
-        return errors.ValueKind == JsonValueKind.Array &&
-            errors.GetArrayLength() > 0 &&
+        if (!root.TryGetProperty("errors", out errors))
+        {
+            return 0;
+        }
+
+        if (errors.ValueKind != JsonValueKind.Array)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned an invalid GraphQL errors field.", StatusCodes.Status500InternalServerError);
+        }
+
+        return errors.GetArrayLength();
+    }
+
+    private static bool HasBlockingErrors(
+        JsonElement errors,
+        int errorCount,
+        Func<JsonElement, bool> canTolerateError)
+    {
+        return errorCount > 0 &&
             (canTolerateError == null || errors.EnumerateArray().Any(error => !canTolerateError(error)));
     }
 
-    private static bool IsFailedWithoutGraphQlErrors(XApiExecutionResult result, bool hasErrors)
+    private void EnsureObjectData(JsonElement root, string source)
     {
-        return !result.Succeeded && !hasErrors;
+        if (!root.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.XApiInvalidResponse, $"{source} returned a GraphQL response without object data.", StatusCodes.Status500InternalServerError);
+        }
     }
 
-    private static string GetGraphQlErrorMessage(JsonElement errors, string source)
+    private void MarkDegradedForRecoverableErrors(int errorCount)
     {
-        var fallback = $"{source} execution failed.";
-        return errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
-            ? ReadString(errors[0], "message") ?? fallback
-            : fallback;
+        if (errorCount == 0)
+        {
+            return;
+        }
+
+        HttpContextAccessor.HttpContext?.RequestServices?
+            .GetService<IUcpOperationTelemetry>()?
+            .MarkDegraded(nameof(XApiResponseException), "xapi_recoverable_graphql_error");
     }
 
     protected static string FirstNotEmpty(params string[] values)
