@@ -30,8 +30,9 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         ICustomerOrderService customerOrderService,
         ICustomerOrderSearchService customerOrderSearchService,
         IHttpContextAccessor httpContextAccessor,
-        IOptions<UcpOptions> options)
-        : base(httpContextAccessor)
+        IOptions<UcpOptions> options,
+        IUcpBuyerContextAccessor buyerContextAccessor = null)
+        : base(httpContextAccessor, buyerContextAccessor)
     {
         _customerOrderService = customerOrderService;
         _customerOrderSearchService = customerOrderSearchService;
@@ -76,14 +77,19 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "order_id, order_number, or cart_id is required.");
         }
 
+        var buyerContext = ResolveBuyerContext(
+            requestedBuyerIds: [request.Context?.BuyerId],
+            requestedOrganizationIds: [request.Context?.OrganizationId],
+            requireBuyer: true);
+
         return new OrderExecutionRequest
         {
             OrderId = request.OrderId,
             OrderNumber = request.OrderNumber,
             CartId = request.CartId,
             CultureName = FirstNotEmpty(request.Context?.Language, _options.DefaultCultureName),
-            UserId = FirstNotEmpty(GetBuyerUserId(), request.Context?.BuyerId),
-            OrganizationId = FirstNotEmpty(GetBuyerOrganizationId(), request.Context?.OrganizationId),
+            UserId = buyerContext.UserId,
+            OrganizationId = buyerContext.OrganizationId,
         };
     }
 

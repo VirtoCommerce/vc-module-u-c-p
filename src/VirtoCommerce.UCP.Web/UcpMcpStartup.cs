@@ -11,8 +11,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Net.Http.Headers;
 using ModelContextProtocol.AspNetCore;
-using VirtoCommerce.UCP.Core;
 using VirtoCommerce.Platform.Core.Modularity;
+using VirtoCommerce.UCP.Core;
+using VirtoCommerce.UCP.Web.Mcp;
 
 namespace VirtoCommerce.UCP.Web;
 
@@ -42,6 +43,7 @@ public class UcpMcpStartup : IPlatformStartup
                 });
                 branch.UseRouting();
                 branch.UseAuthentication();
+                branch.UseMiddleware<UcpMcpBuyerAuthenticationMiddleware>();
                 branch.UseAuthorization();
                 branch.UseEndpoints(endpoints =>
                 {

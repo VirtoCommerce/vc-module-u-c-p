@@ -20,10 +20,11 @@ Canonical public UCP endpoints are published without the `/api` prefix.
 * **Order tracking** — order status, totals, line items, and shipment tracking by order id, order number, or cart id after handoff
 * **Geography lookup** — country and region resolution through the platform `ICountriesService` for checkout address normalization
 * **Streamable HTTP MCP server** — `/ucp/mcp` with typed UCP commerce tools for the installed storefront/platform, built on the official C# MCP SDK
-* **Buyer context propagation** — header-based B2B buyer delegation through `X-Buyer-User-Id` and `X-Buyer-Organization-Id`
+* **Unified anonymous and authenticated buyer flows** — the same `/ucp/mcp` endpoint and the same tools support anonymous shopping or buyer identity from Virto Commerce Platform OAuth claims
+* **Safe cart upgrade** — `update_cart` can verify an anonymous buyer capability and delegate anonymous-to-authenticated cart merging to XCart
 * **Structured UCP errors** — machine-readable error codes with correlation id support
 
-> **Note:** New UCP features are coming soon — delivery and payment method selection, carrier-level shipment tracking, faceted catalog filters, and OAuth2/OIDC buyer delegation. See the [Roadmap](#roadmap).
+> **Authentication:** UCP is an OAuth protected resource only. Virto Commerce Platform/OpenIddict owns login, consent, authorization-code/PKCE, token issuance, validation, users, organizations, and registered OAuth clients.
 
 ## Quickstart: Connect Virto Start Cloud to Claude Desktop
 
@@ -219,18 +220,17 @@ flowchart LR
 
 1. A client calls a canonical UCP endpoint.
 2. The controller accepts the HTTP request and delegates work to a UCP service.
-3. The service normalizes UCP request context: store, currency, culture, pagination, and buyer headers.
+3. The service normalizes UCP request context and derives any authenticated buyer identity from the validated Platform principal.
 4. Catalog operations are translated to XCatalog GraphQL queries.
 5. Cart operations are translated to XCart GraphQL queries and mutations.
 6. `IXApiInProcessExecutor` runs GraphQL inside the current platform process.
 7. The service maps XCatalog, XCart, Orders, Store, and platform dictionary data back to UCP response models.
 
-Buyer delegation is header-based:
+Commerce tools do not expose an authentication mode. A request without a Platform user bearer token uses the public/anonymous flow; a request with a valid token uses the linked buyer and organization from the Platform `ClaimsPrincipal`. Anonymous carts use an opaque `ucp-anonymous-*` continuation identifier. `X-Buyer-User-Id` and `X-Buyer-Organization-Id` are rejected.
 
-- `X-Buyer-User-Id`
-- `X-Buyer-Organization-Id`
+The MCP protected-resource metadata is published at `/.well-known/oauth-protected-resource/ucp/mcp`. It points desktop clients to the Platform origin as the authorization server. OAuth clients must be pre-registered through existing Platform facilities; UCP does not implement dynamic client registration or issue tokens.
 
-The service adds buyer claims to the principal used for XAPI execution, so delegated B2B context flows through existing Virto Commerce authorization and context mechanisms.
+When a user explicitly asks to act through their account, the MCP client calls `link_buyer_identity`. Its standard HTTP 401 bearer challenge starts Platform OAuth; after linking, the ordinary commerce tools are called unchanged. To transfer an existing anonymous cart, call `update_cart` with the saved anonymous `buyer_id`, `cart_id`, and complete desired line state. UCP verifies the anonymous owner and calls XCart `mergeCart`; it does not implement a second cart merge algorithm.
 
 ## Module Structure
 
@@ -324,7 +324,7 @@ PUT /ucp/v1/carts/{cartId}
 
 `create_cart` creates a cart through XCart `addItem`, then applies coupons through `addCoupon`.
 
-`list_carts` is a Virto extension over the XCart `carts` query. It requires buyer context through `X-Buyer-User-Id` or `context.buyer_id` / `buyer_id` and does not return a global anonymous cart list.
+`list_carts` is a Virto extension over the XCart `carts` query. Anonymous continuation requires the server-issued `buyer_id`; authenticated mode derives the buyer and organization from the Platform token. It never returns a global cart list.
 
 `update_cart` follows UCP replacement semantics: the request describes the desired final cart state, and the adapter computes the required XCart mutations:
 
@@ -390,7 +390,7 @@ Example handoff request:
     "store_id": "store-acme",
     "currency": "USD",
     "language": "en-US",
-    "buyer_id": "ucp-anonymous-123"
+    "buyer_id": "ucp-anonymous-0123456789abcdef0123456789abcdef"
   },
   "buyer": {
     "email": "buyer@example.com"
@@ -597,7 +597,6 @@ New UCP features are coming soon. Near-term implementation areas:
 - Delivery and payment method selection after address-based available methods are known.
 - Full carrier-level shipment tracking events when carrier integration is available.
 - Faceted catalog filter schema for richer product discovery.
-- OAuth2/OIDC buyer delegation instead of header-only context.
 
 ## Documentation
 

@@ -4,14 +4,14 @@ using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Options;
+using VirtoCommerce.OrdersModule.Core.Model;
+using VirtoCommerce.OrdersModule.Core.Model.Search;
+using VirtoCommerce.OrdersModule.Core.Services;
 using VirtoCommerce.UCP.Core;
 using VirtoCommerce.UCP.Core.Models;
 using VirtoCommerce.UCP.Core.Options;
 using VirtoCommerce.UCP.Core.Services;
 using VirtoCommerce.UCP.Data.Services;
-using VirtoCommerce.OrdersModule.Core.Model;
-using VirtoCommerce.OrdersModule.Core.Model.Search;
-using VirtoCommerce.OrdersModule.Core.Services;
 using Xunit;
 
 namespace VirtoCommerce.UCP.Tests;
@@ -220,7 +220,8 @@ public class UcpOrderServiceTests
             Options.Create(new UcpOptions
             {
                 DefaultCultureName = "en-US",
-            }));
+            }),
+            new TestBuyerContextAccessor());
     }
 
     private static CustomerOrder CreateOrder(string id, string cartId, string buyerId)
