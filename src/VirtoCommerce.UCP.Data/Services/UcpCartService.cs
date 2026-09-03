@@ -27,7 +27,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
     private const int BillingAndShippingAddressType = 3;
     private const int PickupAddressType = 4;
 
-    private static readonly IReadOnlyDictionary<string, string> MutationInputNames = new Dictionary<string, string>(StringComparer.Ordinal)
+    private static readonly Dictionary<string, string> MutationInputNames = new(StringComparer.Ordinal)
     {
         ["addItem"] = "AddItem",
         ["changeCartItemQuantity"] = "ChangeCartItemQuantity",
