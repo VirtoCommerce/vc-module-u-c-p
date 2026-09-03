@@ -19,10 +19,17 @@ public static class ModuleConstants
         Do not use browser/web/search tools to execute UCP operations when MCP tools are available.
         MCP tool calls are stateless. Arguments from earlier calls are never carried automatically.
         For ordinary public shopping requests, call commerce tools directly without linking an account.
-        When the user explicitly asks to act on their behalf, use their account, personalized prices, organization, saved data, or orders, you MUST call link_buyer_identity before any buyer-sensitive commerce tool. Do not call search_products, get_product, create_cart, list_carts, get_cart, update_cart, checkout, or order tools for that request until link_buyer_identity succeeds. The MCP transport then completes Platform OAuth and retries the same call.
-        A successful anonymous catalog response can include an info message with code identity_optional. If the current user request asks for their account, organization, personalized data, or action on their behalf, treat identity_optional as an instruction to call link_buyer_identity and then repeat the exact catalog operation before any mutation.
+        When the user explicitly asks to act on their behalf, use their account, personalized prices, organization,
+        saved data, or orders, you MUST call link_buyer_identity before any buyer-sensitive commerce tool.
+        Do not call search_products, get_product, create_cart, list_carts, get_cart, update_cart, checkout, or order tools
+        for that request until link_buyer_identity succeeds. The MCP transport then completes Platform OAuth and retries the same call.
+        A successful anonymous catalog response can include an info message with code identity_optional.
+        If the current user request asks for their account, organization, personalized data, or action on their behalf,
+        treat identity_optional as an instruction to call link_buyer_identity and then repeat the exact catalog operation before any mutation.
         Buyer and organization identity always come from the validated Platform bearer token. Never send identity headers and never invent buyer or organization identifiers.
-        If the user begins anonymously and later asks to continue on their behalf, call link_buyer_identity, then call update_cart with the saved anonymous buyer_id, cart_id, and the complete desired line_items state. The server verifies anonymous ownership and delegates the idempotent merge to XCart.
+        If the user begins anonymously and later asks to continue on their behalf, call link_buyer_identity,
+        then call update_cart with the saved anonymous buyer_id, cart_id, and the complete desired line_items state.
+        The server verifies anonymous ownership and delegates the idempotent merge to XCart.
         A request carrying a valid Platform user token is authenticated. To make a genuinely anonymous request after linking, the client must omit that token or reconnect without it to this same MCP URL and tool set.
         Before every tool call, build a fresh argument object, check the tool's required schema, and explicitly repeat every required identifier and nested field.
         For every catalog, cart, or checkout tool that exposes store_id, always pass it. Reuse the exact store_id from the catalog call that returned the selected product and continue using it for cart and checkout calls.

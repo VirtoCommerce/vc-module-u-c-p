@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -25,7 +26,10 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.SearchProducts, ReadOnly = true, Destructive = false)]
-    [Description("Search products in this Virto Commerce storefront. Without a Platform bearer token this search is anonymous. If the user asks to use their account, act on their behalf, or use their organization or personalized prices, do not call this tool until link_buyer_identity succeeds; then call this tool with the same search arguments.")]
+    [Description(
+        "Search products in this Virto Commerce storefront. Without a Platform bearer token this search is anonymous. " +
+        "If the user asks to use their account, act on their behalf, or use their organization or personalized prices, " +
+        "do not call this tool until link_buyer_identity succeeds; then call this tool with the same search arguments.")]
     public static Task<object> SearchProducts(
         IUcpProfileService profileService,
         IUcpCatalogService catalogService,
@@ -110,7 +114,10 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.CreateCart, ReadOnly = false, Destructive = false)]
-    [Description("Create a cart in this Virto Commerce storefront. Without a Platform bearer token this creates an anonymous cart. If the user asks for 'my cart', to act on their behalf, or to use their account or organization, do not call this tool until link_buyer_identity succeeds. Buyer and organization then come only from the validated Platform token; never invent them.")]
+    [Description(
+        "Create a cart in this Virto Commerce storefront. Without a Platform bearer token this creates an anonymous cart. " +
+        "If the user asks for 'my cart', to act on their behalf, or to use their account or organization, do not call this tool " +
+        "until link_buyer_identity succeeds. Buyer and organization then come only from the validated Platform token; never invent them.")]
     public static Task<object> CreateCart(
         IUcpProfileService profileService,
         IUcpCartService cartService,
@@ -144,7 +151,11 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.ListCarts, ReadOnly = true, Destructive = false)]
-    [Description("List buyer-scoped carts in this Virto Commerce storefront. Anonymous continuation requires buyer_id. For the user's account, organization, or saved carts, do not call this tool until link_buyer_identity succeeds; buyer and organization then come from the Platform token. Global cart listing is not allowed.")]
+    [Description(
+        "List buyer-scoped carts in this Virto Commerce storefront. Anonymous continuation requires buyer_id. " +
+        "For the user's account, organization, or saved carts, do not call this tool until link_buyer_identity succeeds; " +
+        "buyer and organization then come from the Platform token. Global cart listing is not allowed.")]
+    [SuppressMessage("Maintainability", "S107", Justification = "Parameters define the public MCP tool schema.")]
     public static Task<object> ListCarts(
         IUcpProfileService profileService,
         IUcpCartService cartService,
@@ -236,7 +247,10 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.CreateCheckout, ReadOnly = false, Destructive = false)]
-    [Description("Create checkout in this Virto Commerce storefront. For the user's account or organization, do not call this tool until link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
+    [Description(
+        "Create checkout in this Virto Commerce storefront. For the user's account or organization, do not call this tool " +
+        "until link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, " +
+        "shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values.")]
     public static Task<object> CreateCheckout(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
@@ -346,7 +360,11 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.CheckoutAndHandoff, ReadOnly = false, Destructive = false)]
-    [Description("Create checkout and immediately create a hosted checkout handoff URL. For the user's account or organization, do not call this tool until link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values. This does not execute a payment.")]
+    [Description(
+        "Create checkout and immediately create a hosted checkout handoff URL. For the user's account or organization, " +
+        "do not call this tool until link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, " +
+        "shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values. " +
+        "This does not execute a payment.")]
     public static Task<object> CheckoutAndHandoff(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,
@@ -398,7 +416,11 @@ public static class UcpMcpCommerceTools
     }
 
     [McpServerTool(Name = ModuleConstants.McpTools.HandoffCheckout, ReadOnly = false, Destructive = false)]
-    [Description("Create a hosted checkout handoff URL. For the user's account or organization, do not call this tool until link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values. This does not execute a payment.")]
+    [Description(
+        "Create a hosted checkout handoff URL. For the user's account or organization, do not call this tool until " +
+        "link_buyer_identity succeeds. For physical goods, do not call until shipping_address.first_name, " +
+        "shipping_address.last_name, and shipping_address.postal_code are provided; ask the user for missing values. " +
+        "This does not execute a payment.")]
     public static Task<object> HandoffCheckout(
         IUcpProfileService profileService,
         IUcpCheckoutService checkoutService,

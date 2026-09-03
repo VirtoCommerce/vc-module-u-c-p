@@ -12,7 +12,11 @@ namespace VirtoCommerce.UCP.Web.Mcp;
 public static class UcpMcpIdentityTools
 {
     [McpServerTool(Name = ModuleConstants.McpTools.LinkBuyerIdentity, ReadOnly = true, Destructive = false)]
-    [Description("REQUIRED first step for an authenticated buyer request. Call this before search_products, get_product, create_cart, cart, checkout, or order tools whenever the user says 'my account', 'my cart', 'on my behalf', 'from my name', 'for my organization', or asks for personalized prices, saved data, or orders. It starts standard Virto Commerce Platform OAuth; after it succeeds, repeat the requested commerce operation. Do not call it when the user explicitly requests anonymous shopping.")]
+    [Description(
+        "REQUIRED first step for an authenticated buyer request. Call this before search_products, get_product, create_cart, " +
+        "cart, checkout, or order tools whenever the user says 'my account', 'my cart', 'on my behalf', 'from my name', " +
+        "'for my organization', or asks for personalized prices, saved data, or orders. It starts standard Virto Commerce Platform OAuth; " +
+        "after it succeeds, repeat the requested commerce operation. Do not call it when the user explicitly requests anonymous shopping.")]
     public static Task<object> LinkBuyerIdentity(
         IUcpBuyerContextAccessor buyerContextAccessor,
         CancellationToken cancellationToken = default)

@@ -27,6 +27,19 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
     private const int BillingAndShippingAddressType = 3;
     private const int PickupAddressType = 4;
 
+    private static readonly IReadOnlyDictionary<string, string> MutationInputNames = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["addItem"] = "AddItem",
+        ["changeCartItemQuantity"] = "ChangeCartItemQuantity",
+        ["removeCartItem"] = "RemoveItem",
+        ["addCoupon"] = "AddCoupon",
+        ["removeCoupon"] = "RemoveCoupon",
+        ["addOrUpdateCartAddress"] = "AddOrUpdateCartAddress",
+        ["addOrUpdateCartShipment"] = "AddOrUpdateCartShipment",
+        ["addOrUpdateCartPayment"] = "AddOrUpdateCartPayment",
+        ["mergeCart"] = "MergeCart",
+    };
+
     private readonly IXApiInProcessExecutor _xApiExecutor;
     private readonly ICountriesService _countriesService;
     private readonly UcpOptions _options;
@@ -115,13 +128,7 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
         using var document = ParseGraphQlResult(result, "XCart");
         var cartsElement = document.RootElement.GetProperty("data").GetProperty("carts");
-        if (cartsElement.TryGetProperty("items", out var cartItems) && cartItems.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var cart in cartItems.EnumerateArray())
-            {
-                EnsureCartOwnership(cart, cartRequest);
-            }
-        }
+        EnsureCartListOwnership(cartsElement, cartRequest);
         var carts = ReadCarts(cartsElement);
 
         return new UcpCartListResponse
@@ -623,6 +630,19 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
                 ModuleConstants.ErrorCodes.BuyerContextMismatch,
                 "Cart does not belong to the resolved buyer context.",
                 StatusCodes.Status403Forbidden);
+        }
+    }
+
+    private void EnsureCartListOwnership(JsonElement carts, CartExecutionRequest request)
+    {
+        if (!carts.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var cart in items.EnumerateArray())
+        {
+            EnsureCartOwnership(cart, request);
         }
     }
 
@@ -1198,19 +1218,12 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
 
     protected static string GetMutationInputName(string mutationName)
     {
-        return mutationName switch
+        if (MutationInputNames.TryGetValue(mutationName, out var inputName))
         {
-            "addItem" => "AddItem",
-            "changeCartItemQuantity" => "ChangeCartItemQuantity",
-            "removeCartItem" => "RemoveItem",
-            "addCoupon" => "AddCoupon",
-            "removeCoupon" => "RemoveCoupon",
-            "addOrUpdateCartAddress" => "AddOrUpdateCartAddress",
-            "addOrUpdateCartShipment" => "AddOrUpdateCartShipment",
-            "addOrUpdateCartPayment" => "AddOrUpdateCartPayment",
-            "mergeCart" => "MergeCart",
-            _ => throw new InvalidOperationException($"Unsupported cart mutation '{mutationName}'."),
-        };
+            return inputName;
+        }
+
+        throw new InvalidOperationException($"Unsupported cart mutation '{mutationName}'.");
     }
 
     protected static string ReadFirstArrayObjectString(JsonElement element, string arrayPropertyName, string propertyName)
