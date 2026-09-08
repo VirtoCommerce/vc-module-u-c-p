@@ -190,14 +190,22 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
 
     private static bool RequestsIdentityLinking(JsonElement root)
     {
-        return root.ValueKind == JsonValueKind.Object &&
-            root.TryGetProperty("method", out var method) &&
-            method.ValueKind == JsonValueKind.String &&
-            method.ValueEquals("tools/call") &&
-            root.TryGetProperty("params", out var parameters) &&
-            parameters.ValueKind == JsonValueKind.Object &&
-            parameters.TryGetProperty("name", out var name) &&
-            name.ValueKind == JsonValueKind.String &&
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("method", out var method) ||
+            method.ValueKind != JsonValueKind.String ||
+            !method.ValueEquals("tools/call"))
+        {
+            return false;
+        }
+
+        if (!root.TryGetProperty("params", out var parameters) ||
+            parameters.ValueKind != JsonValueKind.Object ||
+            !parameters.TryGetProperty("name", out var name))
+        {
+            return false;
+        }
+
+        return name.ValueKind == JsonValueKind.String &&
             string.Equals(name.GetString(), ModuleConstants.McpTools.LinkBuyerIdentity, StringComparison.Ordinal);
     }
 
