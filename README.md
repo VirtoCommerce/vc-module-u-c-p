@@ -228,7 +228,9 @@ flowchart LR
 
 Commerce tools do not expose an authentication mode. A request without a Platform user bearer token uses the public/anonymous flow; a request with a valid token uses the linked buyer and organization from the Platform `ClaimsPrincipal`. Anonymous carts use an opaque `ucp-anonymous-*` continuation identifier. `X-Buyer-User-Id` and `X-Buyer-Organization-Id` are rejected.
 
-The MCP protected-resource metadata is published at `/.well-known/oauth-protected-resource/ucp/mcp`. It points desktop clients to the Platform origin as the authorization server. OAuth clients must be pre-registered through existing Platform facilities; UCP does not implement dynamic client registration or issue tokens.
+The MCP protected-resource metadata is published at `/.well-known/oauth-protected-resource/ucp/mcp`. Its authorization server identifier matches the issuer published by Platform discovery, including the trailing slash. OAuth clients must be pre-registered through the existing Platform OAuth applications API; UCP does not implement dynamic client registration or issue tokens. Register the exact public MCP URI in `Authorization:Resources` and grant each client its matching `rsrc:<URI>` permission.
+
+When Platform is private and OAuth runs through the public storefront, set `Authorization:OAuthLoginPath` to `/oauth/authorize`. The storefront must run the authenticated handoff/OAuth continuation changes and proxy `/connect/authorize`, `/connect/session`, `/connect/token`, `/revoke/token`, the discovery/JWKS endpoints, and the UCP endpoints to Platform, preserving the public host and HTTPS scheme. Leave `OAuthLoginPath` unset when using the existing Platform login page.
 
 When a user explicitly asks to act through their account, the MCP client calls `link_buyer_identity`. Its standard HTTP 401 bearer challenge starts Platform OAuth; after linking, the ordinary commerce tools are called unchanged. To transfer an existing anonymous cart, call `update_cart` with the saved anonymous `buyer_id`, `cart_id`, and complete desired line state. UCP verifies the anonymous owner and calls XCart `mergeCart`; it does not implement a second cart merge algorithm.
 
@@ -434,9 +436,9 @@ GET /ucp/v1/orders?cart_id={cartId}&buyer_id=user-42&culture_name=en-US
 
 `track_order` returns order status, order number, totals, line items, shipment snapshot, payment snapshot, and shipment tracking fields when they are available in order data.
 
-After hosted handoff, the client usually does not know `order_id` yet. The primary path is lookup by the original `cart_id`, matched against `CustomerOrder.ShoppingCartId` through Orders module services. If buyer context changed during guest checkout, the endpoint retries without buyer filters and still matches strictly by `cart_id`.
+After hosted handoff, the client usually does not know `order_id` yet. The primary path is lookup by the original `cart_id`, matched against `CustomerOrder.ShoppingCartId` through Orders module services. Lookup stays within the resolved buyer and organization context. If the buyer signed in during guest checkout, link that identity before tracking the order.
 
-If the order has not been created yet or is not found among recent orders, the endpoint returns the structured error `order_not_found`.
+If the order has not been created yet or is not found within that buyer context, the endpoint returns the structured error `order_not_found`.
 
 ## MCP Server
 

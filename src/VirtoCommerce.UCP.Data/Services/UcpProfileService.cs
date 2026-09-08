@@ -172,7 +172,7 @@ public class UcpProfileService : IUcpProfileService
                 AnonymousCatalog = _options.AnonymousCatalog,
                 BuyerDelegation = "platform_oauth_bearer",
                 BuyerIdentitySource = "platform_claims_principal",
-                AuthorizationServer = GetRequestOrigin(request),
+                AuthorizationServer = request == null ? null : $"{GetRequestOrigin(request)}{request.PathBase}/",
                 ProtectedResourceMetadata = BuildProtectedResourceMetadataUrl(request),
             },
             Headers = new UcpHeaderProfile
@@ -466,7 +466,7 @@ public class UcpProfileService : IUcpProfileService
         var origin = GetRequestOrigin(request);
         return string.IsNullOrWhiteSpace(origin)
             ? ModuleConstants.Endpoints.McpProtectedResourceMetadata
-            : origin + ModuleConstants.Endpoints.McpProtectedResourceMetadata;
+            : origin + request.PathBase + ModuleConstants.Endpoints.McpProtectedResourceMetadata;
     }
 
     protected virtual string GetHandoffTemplate(string origin)

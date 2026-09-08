@@ -85,7 +85,7 @@ public class UcpProfileServiceTests
         Assert.Empty(profile.Headers.BuyerContext);
         Assert.Equal("platform_oauth_bearer", profile.Auth.BuyerDelegation);
         Assert.Equal("platform_claims_principal", profile.Auth.BuyerIdentitySource);
-        Assert.Equal("https://acme.example", profile.Auth.AuthorizationServer);
+        Assert.Equal("https://acme.example/", profile.Auth.AuthorizationServer);
         Assert.Equal("https://acme.example/.well-known/oauth-protected-resource/ucp/mcp", profile.Auth.ProtectedResourceMetadata);
         Assert.Equal(["openid", "profile", "offline_access"], profile.Auth.Scopes);
         Assert.Contains(ModuleConstants.ErrorCodes.XApiInvalidResponse, profile.Errors.Codes);

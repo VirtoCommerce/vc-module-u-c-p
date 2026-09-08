@@ -18,7 +18,7 @@ public sealed class UcpOAuthMetadataController : ControllerBase
         return Ok(new UcpProtectedResourceMetadata
         {
             Resource = origin + ModuleConstants.Endpoints.Mcp,
-            AuthorizationServers = [origin],
+            AuthorizationServers = [origin + "/"],
             ScopesSupported = ["openid", "profile", "offline_access"],
             ResourceName = "Virto Commerce UCP MCP",
         });
