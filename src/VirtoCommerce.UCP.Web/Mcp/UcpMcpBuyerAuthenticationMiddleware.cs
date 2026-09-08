@@ -172,23 +172,7 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
                 return (false, McpErrorCode.InvalidRequest);
             }
 
-            if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty("method", out var method) ||
-                method.ValueKind != JsonValueKind.String ||
-                !method.ValueEquals("tools/call"))
-            {
-                return (false, null);
-            }
-
-            if (!root.TryGetProperty("params", out var parameters) ||
-                parameters.ValueKind != JsonValueKind.Object ||
-                !parameters.TryGetProperty("name", out var name))
-            {
-                return (false, null);
-            }
-
-            return (name.ValueKind == JsonValueKind.String &&
-                string.Equals(name.GetString(), ModuleConstants.McpTools.LinkBuyerIdentity, StringComparison.Ordinal), null);
+            return (RequestsIdentityLinking(root), null);
         }
         catch (JsonException)
         {
@@ -202,6 +186,19 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         {
             request.Body.Position = 0;
         }
+    }
+
+    private static bool RequestsIdentityLinking(JsonElement root)
+    {
+        return root.ValueKind == JsonValueKind.Object &&
+            root.TryGetProperty("method", out var method) &&
+            method.ValueKind == JsonValueKind.String &&
+            method.ValueEquals("tools/call") &&
+            root.TryGetProperty("params", out var parameters) &&
+            parameters.ValueKind == JsonValueKind.Object &&
+            parameters.TryGetProperty("name", out var name) &&
+            name.ValueKind == JsonValueKind.String &&
+            string.Equals(name.GetString(), ModuleConstants.McpTools.LinkBuyerIdentity, StringComparison.Ordinal);
     }
 
     private static bool IsValidMessage(JsonElement root)

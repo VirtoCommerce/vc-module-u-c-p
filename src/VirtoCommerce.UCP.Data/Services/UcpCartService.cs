@@ -478,17 +478,22 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
                 continue;
             }
 
-            var quantity = (long)consolidated.Quantity + desiredItem.Quantity;
-            if (quantity > int.MaxValue || quantity < int.MinValue)
-            {
-                throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "The combined line item quantity is out of range.");
-            }
-
-            consolidated.Quantity = (int)quantity;
+            consolidated.Quantity = CombineQuantities(consolidated.Quantity, desiredItem.Quantity);
             consolidated.Id = FirstNotEmpty(consolidated.Id, currentItem?.Id, desiredItem.Id);
         }
 
         return result;
+    }
+
+    private int CombineQuantities(int currentQuantity, int additionalQuantity)
+    {
+        var quantity = (long)currentQuantity + additionalQuantity;
+        if (quantity > int.MaxValue || quantity < int.MinValue)
+        {
+            throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "The combined line item quantity is out of range.");
+        }
+
+        return (int)quantity;
     }
 
     protected virtual UcpCartLineItem ResolveCurrentItemForConsolidation(UcpCartLineItemRequest desiredItem, IEnumerable<UcpCartLineItem> currentItems)
