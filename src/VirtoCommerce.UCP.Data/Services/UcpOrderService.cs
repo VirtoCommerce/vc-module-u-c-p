@@ -19,8 +19,8 @@ namespace VirtoCommerce.UCP.Data.Services;
 
 public class UcpOrderService : UcpServiceBase, IUcpOrderService
 {
-    private const int RecentOrderLookupLimit = 50;
-    private static readonly string OrderResponseGroup = CustomerOrderResponseGroup.Full.ToString();
+    private const int _orderLookupPageSize = 50;
+    private static readonly string _orderResponseGroup = CustomerOrderResponseGroup.Full.ToString();
 
     private readonly ICustomerOrderService _customerOrderService;
     private readonly ICustomerOrderSearchService _customerOrderSearchService;
@@ -47,7 +47,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
         CustomerOrder orderModel;
         if (!string.IsNullOrWhiteSpace(orderRequest.CartId))
         {
-            orderModel = await FindOrderByCartId(orderRequest);
+            orderModel = await FindOrderByCartId(orderRequest, cancellationToken);
         }
         else
         {
@@ -105,7 +105,7 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
             var orders = await UcpDiagnostics.ExecuteDependency(
                 "orders",
                 "GetOrdersById",
-                () => _customerOrderService.GetAsync([request.OrderId], OrderResponseGroup, clone: false));
+                () => _customerOrderService.GetAsync([request.OrderId], _orderResponseGroup, clone: false));
             var order = orders.FirstOrDefault();
             if (IsOrderInScope(order, request))
             {
@@ -128,42 +128,48 @@ public class UcpOrderService : UcpServiceBase, IUcpOrderService
                 OrganizationId = request.OrganizationId,
                 Number = number,
                 Take = 1,
-                ResponseGroup = OrderResponseGroup,
+                ResponseGroup = _orderResponseGroup,
             }, clone: false));
 
-        return result.Results.FirstOrDefault();
+        return result.Results.FirstOrDefault(x => IsOrderInScope(x, request));
     }
 
-    private async Task<CustomerOrder> FindOrderByCartId(OrderExecutionRequest request)
+    private async Task<CustomerOrder> FindOrderByCartId(OrderExecutionRequest request, CancellationToken cancellationToken)
     {
+        if (!HasOrderScope(request))
+        {
+            return null;
+        }
+
         var criteria = new CustomerOrderSearchCriteria
         {
             CustomerId = request.UserId,
             OrganizationId = request.OrganizationId,
-            Take = RecentOrderLookupLimit,
+            Take = _orderLookupPageSize,
             Sort = "CreatedDate:desc",
-            ResponseGroup = OrderResponseGroup,
+            ResponseGroup = _orderResponseGroup,
         };
 
-        var order = await FindOrderByCartId(criteria, request.CartId, "SearchOrdersByCartScoped");
-        if (order != null || string.IsNullOrWhiteSpace(request.UserId) && string.IsNullOrWhiteSpace(request.OrganizationId))
+        while (true)
         {
-            return order;
+            cancellationToken.ThrowIfCancellationRequested();
+            var result = await UcpDiagnostics.ExecuteDependency(
+                "orders",
+                "SearchOrdersByCartScoped",
+                () => _customerOrderSearchService.SearchAsync(criteria, clone: false));
+            var order = result.Results.FirstOrDefault(x => IsOrderInScope(x, request) &&
+                string.Equals(x.ShoppingCartId, request.CartId, StringComparison.OrdinalIgnoreCase));
+            if (order != null)
+            {
+                return order;
+            }
+
+            criteria.Skip += result.Results.Count;
+            if (result.Results.Count == 0 || criteria.Skip >= result.TotalCount)
+            {
+                return null;
+            }
         }
-
-        criteria.CustomerId = null;
-        criteria.OrganizationId = null;
-
-        return await FindOrderByCartId(criteria, request.CartId, "SearchOrdersByCartFallback");
-    }
-
-    private async Task<CustomerOrder> FindOrderByCartId(CustomerOrderSearchCriteria criteria, string cartId, string operation)
-    {
-        var result = await UcpDiagnostics.ExecuteDependency(
-            "orders",
-            operation,
-            () => _customerOrderSearchService.SearchAsync(criteria, clone: false));
-        return result.Results.FirstOrDefault(order => string.Equals(order.ShoppingCartId, cartId, StringComparison.OrdinalIgnoreCase));
     }
 
     protected virtual UcpOrder MapOrder(CustomerOrder orderModel)

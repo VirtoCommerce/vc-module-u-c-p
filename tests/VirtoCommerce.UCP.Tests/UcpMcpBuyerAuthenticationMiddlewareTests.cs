@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using VirtoCommerce.UCP.Web.Mcp;
@@ -12,6 +13,74 @@ namespace VirtoCommerce.UCP.Tests;
 [Trait("Category", "Unit")]
 public class UcpMcpBuyerAuthenticationMiddlewareTests
 {
+    [Theory]
+    [InlineData("123")]
+    [InlineData("true")]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    public async Task InvokeAsync_NonStringMethodReturnsInvalidRequest(string method)
+    {
+        var nextCalled = false;
+        var middleware = new UcpMcpBuyerAuthenticationMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = CreateJsonRequest($$"""{"jsonrpc":"2.0","id":1,"method":{{method}}}""");
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        Assert.Equal(0, context.Request.Body.Position);
+    }
+
+    [Theory]
+    [InlineData("not json", -32700)]
+    [InlineData("{\"jsonrpc\":\"2.0\",\"id\":true,\"method\":\"tools/list\"}", -32600)]
+    [InlineData("{\"jsonrpc\":\"2.0\",\"id\":1}", -32600)]
+    [InlineData("null", -32600)]
+    [InlineData("[]", -32600)]
+    public async Task InvokeAsync_InvalidEnvelopeReturnsProtocolError(string json, int expectedCode)
+    {
+        var nextCalled = false;
+        var middleware = new UcpMcpBuyerAuthenticationMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = CreateJsonRequest(json);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.False(nextCalled);
+        Assert.Equal(StatusCodes.Status400BadRequest, context.Response.StatusCode);
+        context.Response.Body.Position = 0;
+        using var response = await JsonDocument.ParseAsync(context.Response.Body, cancellationToken: TestContext.Current.CancellationToken);
+        Assert.Equal(expectedCode, response.RootElement.GetProperty("error").GetProperty("code").GetInt32());
+        Assert.Equal(JsonValueKind.Null, response.RootElement.GetProperty("id").ValueKind);
+    }
+
+    [Theory]
+    [InlineData("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}")]
+    [InlineData("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}")]
+    public async Task InvokeAsync_ValidNotificationOrResponseReachesTransport(string json)
+    {
+        var nextCalled = false;
+        var middleware = new UcpMcpBuyerAuthenticationMiddleware(_ =>
+        {
+            nextCalled = true;
+            return Task.CompletedTask;
+        });
+        var context = CreateJsonRequest(json);
+
+        await middleware.InvokeAsync(context);
+
+        Assert.True(nextCalled);
+        Assert.Equal(0, context.Request.Body.Position);
+    }
+
     [Fact]
     public async Task InvokeAsync_AllowsCommerceToolWithoutBuyerToken()
     {

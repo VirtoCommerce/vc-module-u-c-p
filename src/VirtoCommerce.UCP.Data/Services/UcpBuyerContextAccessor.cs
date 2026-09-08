@@ -11,11 +11,11 @@ namespace VirtoCommerce.UCP.Data.Services;
 
 public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
 {
-    private const string AnonymousBuyerPrefix = "ucp-anonymous-";
-    private const string OrganizationIdClaimType = "organization_id";
+    private const string _anonymousBuyerPrefix = "ucp-anonymous-";
+    private const string _organizationIdClaimType = "organization_id";
 
-    private static readonly string[] UserIdClaimTypes = ["sub", ClaimTypes.NameIdentifier];
-    private static readonly string[] AgentIdClaimTypes = ["client_id", "azp", "oi_prst"];
+    private static readonly string[] _userIdClaimTypes = ["sub", ClaimTypes.NameIdentifier];
+    private static readonly string[] _agentIdClaimTypes = ["client_id", "azp", "oi_prst"];
 
     private readonly IHttpContextAccessor _httpContextAccessor;
 
@@ -63,9 +63,9 @@ public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
                 StatusCodes.Status401Unauthorized);
         }
 
-        var userId = ResolveClaim(authenticatedIdentities, UserIdClaimTypes, "user identifier", required: true);
-        var organizationId = ResolveClaim(authenticatedIdentities, [OrganizationIdClaimType], "organization identifier", required: false);
-        var agentId = ResolveClaim(authenticatedIdentities, AgentIdClaimTypes, "agent identifier", required: false);
+        var userId = ResolveClaim(authenticatedIdentities, _userIdClaimTypes, "user identifier", required: true);
+        var organizationId = ResolveClaim(authenticatedIdentities, [_organizationIdClaimType], "organization identifier", required: false);
+        var agentId = ResolveClaim(authenticatedIdentities, _agentIdClaimTypes, "agent identifier", required: false);
 
         if (string.Equals(userId, agentId, StringComparison.OrdinalIgnoreCase))
         {
@@ -125,7 +125,7 @@ public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
 
         if (string.IsNullOrWhiteSpace(buyerId) && request.CreateAnonymousBuyer)
         {
-            buyerId = AnonymousBuyerPrefix + Guid.NewGuid().ToString("N");
+            buyerId = _anonymousBuyerPrefix + Guid.NewGuid().ToString("N");
         }
         else if (string.IsNullOrWhiteSpace(buyerId) && request.RequireBuyer)
         {
@@ -136,7 +136,7 @@ public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
         {
             UserId = buyerId,
             PublicBuyerId = buyerId,
-            AgentId = ResolveClaim(authenticatedIdentities, AgentIdClaimTypes, "agent identifier", required: false),
+            AgentId = ResolveClaim(authenticatedIdentities, _agentIdClaimTypes, "agent identifier", required: false),
             CorrelationId = _httpContextAccessor.HttpContext?.TraceIdentifier,
             Principal = CreateAnonymousPrincipal(buyerId),
         };
@@ -144,8 +144,8 @@ public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
 
     private bool HasAuthenticatedBuyer(ClaimsIdentity[] identities)
     {
-        var subject = ResolveClaim(identities, UserIdClaimTypes, "user identifier", required: false);
-        var agentId = ResolveClaim(identities, AgentIdClaimTypes, "agent identifier", required: false);
+        var subject = ResolveClaim(identities, _userIdClaimTypes, "user identifier", required: false);
+        var agentId = ResolveClaim(identities, _agentIdClaimTypes, "agent identifier", required: false);
         return !string.IsNullOrWhiteSpace(subject) &&
             !string.Equals(subject, agentId, StringComparison.OrdinalIgnoreCase);
     }
@@ -233,7 +233,7 @@ public sealed class UcpBuyerContextAccessor : IUcpBuyerContextAccessor
 
     private static bool IsAnonymousBuyerId(string value)
     {
-        return value?.StartsWith(AnonymousBuyerPrefix, StringComparison.Ordinal) == true &&
-            Guid.TryParseExact(value[AnonymousBuyerPrefix.Length..], "N", out _);
+        return value?.StartsWith(_anonymousBuyerPrefix, StringComparison.Ordinal) == true &&
+            Guid.TryParseExact(value[_anonymousBuyerPrefix.Length..], "N", out _);
     }
 }

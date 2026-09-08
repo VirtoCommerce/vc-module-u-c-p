@@ -94,6 +94,7 @@ public class UcpMcpStartup : IPlatformStartup
             using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: request.HttpContext.RequestAborted);
             return document.RootElement.ValueKind == JsonValueKind.Object &&
                 document.RootElement.TryGetProperty("method", out var method) &&
+                method.ValueKind == JsonValueKind.String &&
                 method.ValueEquals("tools/list");
         }
         catch (JsonException)

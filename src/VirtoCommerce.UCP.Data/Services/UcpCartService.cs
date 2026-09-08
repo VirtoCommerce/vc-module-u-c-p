@@ -62,27 +62,31 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         request ??= new UcpCartRequest();
         var cartRequest = BuildCartExecutionRequest(request, generateAnonymousBuyer: true);
 
-        if (request.LineItems.Count == 0)
+        if (request.LineItems == null || request.LineItems.Count == 0)
         {
             throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "line_items must contain at least one item.");
         }
 
+        foreach (var lineItem in request.LineItems)
+        {
+            ValidateLineItemForAdd(lineItem);
+        }
+
         var firstLineItem = request.LineItems[0];
-        ValidateLineItemForAdd(firstLineItem);
         var cartElement = await ExecuteCartMutation(
             "addItem",
             "UcpAddCartItem",
             cartRequest,
             BuildAddItemCommand(cartRequest, null, firstLineItem),
             cancellationToken);
+        cartRequest.CartId = ReadString(cartElement, "id");
 
         foreach (var lineItem in request.LineItems.Skip(1))
         {
-            ValidateLineItemForAdd(lineItem);
             cartElement = await ExecuteCartMutation("addItem", "UcpAddCartItem", cartRequest, BuildAddItemCommand(cartRequest, null, lineItem), cancellationToken);
         }
 
-        if (request.Coupons.Count > 0)
+        if (request.Coupons?.Count > 0)
         {
             cartRequest.CartId = ReadString(cartElement, "id");
             foreach (var coupon in NormalizeCoupons(request.Coupons))
@@ -169,8 +173,14 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         var cartRequest = BuildCartExecutionRequest(request, requireBuyer: true);
         cartRequest.CartId = cartId;
 
+        var desiredItems = (request.LineItems ?? []).Select(x => x == null ? null : new UcpCartLineItemRequest
+        {
+            Id = x.Id,
+            ProductId = x.ProductId,
+            Quantity = x.Quantity,
+        }).ToList();
         var currentCart = !string.IsNullOrWhiteSpace(cartRequest.SourceAnonymousBuyerId)
-            ? await MergeAnonymousCart(cartRequest, cancellationToken)
+            ? await MergeAnonymousCart(cartRequest, desiredItems, cancellationToken)
             : await ExecuteGetCart(cartRequest, cancellationToken);
         if (currentCart.ValueKind == JsonValueKind.Null)
         {
@@ -178,15 +188,19 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         }
 
         var currentItems = ReadCartLineItems(currentCart);
-        var desiredItems = ConsolidateDesiredItems(request.LineItems ?? [], currentItems);
-        var cartElement = await RemoveMissingItems(currentCart, cartRequest, currentItems, desiredItems, cancellationToken);
-        cartElement = await ApplyDesiredItems(cartId, cartElement, cartRequest, currentItems, desiredItems, cancellationToken);
+        cartRequest.CartId = ReadString(currentCart, "id");
+        var consolidatedItems = ValidateDesiredItems(cartRequest.CartId, desiredItems, currentItems);
+        var cartElement = await RemoveMissingItems(currentCart, cartRequest, currentItems, consolidatedItems, cancellationToken);
+        cartElement = await ApplyDesiredItems(cartRequest.CartId, cartElement, cartRequest, currentItems, consolidatedItems, cancellationToken);
         cartElement = await ApplyCoupons(cartElement, cartRequest, currentCart, request.Coupons, cancellationToken);
 
         return CreateResponse(cartElement);
     }
 
-    private async Task<JsonElement> MergeAnonymousCart(CartExecutionRequest targetRequest, CancellationToken cancellationToken)
+    private async Task<JsonElement> MergeAnonymousCart(
+        CartExecutionRequest targetRequest,
+        IList<UcpCartLineItemRequest> desiredItems,
+        CancellationToken cancellationToken)
     {
         var sourceRequest = new CartExecutionRequest
         {
@@ -217,6 +231,16 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         }
 
         var sourceCartId = targetRequest.CartId;
+        var sourceItems = ReadCartLineItems(sourceCart);
+        ValidateDesiredItems(sourceCartId, desiredItems, sourceItems);
+        foreach (var desiredItem in desiredItems)
+        {
+            var sourceItem = FindCurrentItem(sourceCartId, sourceItems, desiredItem);
+            desiredItem.ProductId = FirstNotEmpty(desiredItem.ProductId, sourceItem?.ProductId);
+            // XCart assigns new line identifiers when it merges the source cart.
+            desiredItem.Id = null;
+        }
+
         targetRequest.CartId = null;
         var command = BuildBaseCommand(targetRequest);
         command["secondCartId"] = sourceCartId;
@@ -225,6 +249,33 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
         var mergedCart = await ExecuteCartMutation("mergeCart", "UcpMergeCart", targetRequest, command, cancellationToken);
         targetRequest.CartId = ReadString(mergedCart, "id");
         return mergedCart;
+    }
+
+    private IList<UcpCartLineItemRequest> ValidateDesiredItems(
+        string cartId,
+        IList<UcpCartLineItemRequest> desiredItems,
+        IList<UcpCartLineItem> currentItems)
+    {
+        foreach (var desiredItem in desiredItems)
+        {
+            if (desiredItem == null)
+            {
+                throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "line_items must not contain null items.");
+            }
+
+            var currentItem = FindCurrentItem(cartId, currentItems, desiredItem);
+            if (currentItem == null)
+            {
+                ValidateLineItemForAdd(desiredItem);
+            }
+            else if (!string.IsNullOrWhiteSpace(desiredItem.ProductId) &&
+                !string.Equals(desiredItem.ProductId, currentItem.ProductId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "Line item and product identifiers do not match.");
+            }
+        }
+
+        return ConsolidateDesiredItems(desiredItems, currentItems);
     }
 
     public virtual async Task<UcpCartResponse> ApplyCheckoutData(string cartId, UcpCheckoutRequest request, CancellationToken cancellationToken = default)
@@ -427,7 +478,13 @@ public class UcpCartService : UcpServiceBase, IUcpCartService
                 continue;
             }
 
-            consolidated.Quantity += desiredItem.Quantity;
+            var quantity = (long)consolidated.Quantity + desiredItem.Quantity;
+            if (quantity > int.MaxValue || quantity < int.MinValue)
+            {
+                throw CreateException(ModuleConstants.ErrorCodes.InvalidRequest, "The combined line item quantity is out of range.");
+            }
+
+            consolidated.Quantity = (int)quantity;
             consolidated.Id = FirstNotEmpty(consolidated.Id, currentItem?.Id, desiredItem.Id);
         }
 

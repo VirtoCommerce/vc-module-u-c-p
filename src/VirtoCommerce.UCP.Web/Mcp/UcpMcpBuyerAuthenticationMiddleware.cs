@@ -6,17 +6,19 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Net.Http.Headers;
+using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using VirtoCommerce.UCP.Core;
 
 namespace VirtoCommerce.UCP.Web.Mcp;
 
 internal sealed class UcpMcpBuyerAuthenticationMiddleware
 {
-    private const string BearerPrefix = "Bearer ";
-    private const string RequiredScopes = "openid profile offline_access";
+    private const string _bearerPrefix = "Bearer ";
+    private const string _requiredScopes = "openid profile offline_access";
 
-    private static readonly string[] AgentIdClaimTypes = ["client_id", "azp", "oi_prst"];
-    private static readonly string[] BuyerIdClaimTypes = ["sub", ClaimTypes.NameIdentifier];
+    private static readonly string[] _agentIdClaimTypes = ["client_id", "azp", "oi_prst"];
+    private static readonly string[] _buyerIdClaimTypes = ["sub", ClaimTypes.NameIdentifier];
 
     private readonly RequestDelegate _next;
 
@@ -35,7 +37,12 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         }
 
         var hasValidBearerPrincipal = HasValidBearerPrincipal(context, hasBearerHeader);
-        var requiresAuthenticatedBuyer = await RequestsIdentityLinking(context.Request);
+        var (requiresAuthenticatedBuyer, requestError) = await InspectRequest(context.Request);
+        if (requestError.HasValue)
+        {
+            await WriteRequestError(context, requestError.Value);
+            return;
+        }
 
         if (HasAuthorizationHeader(context.Request) && !hasValidBearerPrincipal)
         {
@@ -72,8 +79,8 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         }
 
         var value = authorization[0];
-        return value.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase) &&
-            value.Length > BearerPrefix.Length;
+        return value.StartsWith(_bearerPrefix, StringComparison.OrdinalIgnoreCase) &&
+            value.Length > _bearerPrefix.Length;
     }
 
     private static bool HasValidBearerPrincipal(HttpContext context, bool hasBearerHeader)
@@ -124,13 +131,13 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
             .SelectMany(identity => identity.Claims)
             .ToArray() ?? [];
         var buyerIds = authenticatedClaims
-            .Where(claim => BuyerIdClaimTypes.Contains(claim.Type, StringComparer.Ordinal))
+            .Where(claim => _buyerIdClaimTypes.Contains(claim.Type, StringComparer.Ordinal))
             .Select(claim => claim.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var agentIds = authenticatedClaims
-            .Where(claim => AgentIdClaimTypes.Contains(claim.Type, StringComparer.Ordinal))
+            .Where(claim => _agentIdClaimTypes.Contains(claim.Type, StringComparer.Ordinal))
             .Select(claim => claim.Value)
             .Where(value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -148,11 +155,11 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         return new ClaimsPrincipal(identities);
     }
 
-    private static async Task<bool> RequestsIdentityLinking(HttpRequest request)
+    private static async Task<(bool RequiresIdentityLinking, McpErrorCode? Error)> InspectRequest(HttpRequest request)
     {
         if (!HttpMethods.IsPost(request.Method) || !request.HasJsonContentType())
         {
-            return false;
+            return (false, null);
         }
 
         request.EnableBuffering();
@@ -160,30 +167,36 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         {
             using var document = await JsonDocument.ParseAsync(request.Body, cancellationToken: request.HttpContext.RequestAborted);
             var root = document.RootElement;
+            if (!IsValidMessage(root))
+            {
+                return (false, McpErrorCode.InvalidRequest);
+            }
+
             if (root.ValueKind != JsonValueKind.Object ||
                 !root.TryGetProperty("method", out var method) ||
+                method.ValueKind != JsonValueKind.String ||
                 !method.ValueEquals("tools/call"))
             {
-                return false;
+                return (false, null);
             }
 
             if (!root.TryGetProperty("params", out var parameters) ||
                 parameters.ValueKind != JsonValueKind.Object ||
                 !parameters.TryGetProperty("name", out var name))
             {
-                return false;
+                return (false, null);
             }
 
-            return name.ValueKind == JsonValueKind.String &&
-                string.Equals(name.GetString(), ModuleConstants.McpTools.LinkBuyerIdentity, StringComparison.Ordinal);
+            return (name.ValueKind == JsonValueKind.String &&
+                string.Equals(name.GetString(), ModuleConstants.McpTools.LinkBuyerIdentity, StringComparison.Ordinal), null);
         }
         catch (JsonException)
         {
-            return false;
+            return (false, McpErrorCode.ParseError);
         }
         catch (IOException)
         {
-            return false;
+            return (false, McpErrorCode.ParseError);
         }
         finally
         {
@@ -191,11 +204,39 @@ internal sealed class UcpMcpBuyerAuthenticationMiddleware
         }
     }
 
+    private static bool IsValidMessage(JsonElement root)
+    {
+        try
+        {
+            return root.Deserialize<JsonRpcMessage>(McpJsonUtilities.DefaultOptions) != null;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static async Task WriteRequestError(HttpContext context, McpErrorCode errorCode)
+    {
+        context.Response.StatusCode = StatusCodes.Status400BadRequest;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        await context.Response.WriteAsync(JsonSerializer.Serialize(new
+        {
+            jsonrpc = "2.0",
+            id = (object)null,
+            error = new
+            {
+                code = (int)errorCode,
+                message = errorCode == McpErrorCode.ParseError ? "Parse error" : "Invalid Request",
+            },
+        }), context.RequestAborted);
+    }
+
     private static async Task WriteChallenge(HttpContext context, string error, string message)
     {
         var origin = GetOrigin(context.Request);
         var metadataUrl = origin + ModuleConstants.Endpoints.McpProtectedResourceMetadata;
-        var challenge = $"Bearer realm=\"{Escape(origin)}\", resource_metadata=\"{Escape(metadataUrl)}\", scope=\"{RequiredScopes}\"";
+        var challenge = $"Bearer realm=\"{Escape(origin)}\", resource_metadata=\"{Escape(metadataUrl)}\", scope=\"{_requiredScopes}\"";
         if (!string.IsNullOrWhiteSpace(error))
         {
             challenge += $", error=\"{Escape(error)}\"";

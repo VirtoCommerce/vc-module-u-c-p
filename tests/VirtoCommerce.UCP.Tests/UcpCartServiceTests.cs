@@ -19,6 +19,38 @@ namespace VirtoCommerce.UCP.Tests;
 public class UcpCartServiceTests
 {
     [Fact]
+    public async Task CreateCart_RejectsInvalidSecondLineBeforeAddingFirstItem()
+    {
+        var executor = new StubXApiExecutor(CartWithOneItemJson);
+        var service = CreateService(executor);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.CreateCart(new UcpCartRequest
+        {
+            LineItems =
+            {
+                new UcpCartLineItemRequest { ProductId = "product-1", Quantity = 1 },
+                new UcpCartLineItemRequest { ProductId = "product-2", Quantity = 0 },
+            },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Empty(executor.Requests);
+    }
+
+    [Fact]
+    public async Task CreateCart_NullLinesReturnsStructuredError()
+    {
+        var service = CreateService(new StubXApiExecutor());
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.CreateCart(new UcpCartRequest
+        {
+            LineItems = null,
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Equal(400, exception.StatusCode);
+    }
+
+    [Fact]
     public async Task CreateCart_AddsItemsAndCouponThroughXCart()
     {
         var executor = new StubXApiExecutor(CartWithOneItemJson, CartWithTwoItemsJson, CartWithCouponJson);
@@ -282,8 +314,10 @@ public class UcpCartServiceTests
         Assert.Empty(executor.Requests);
     }
 
-    [Fact]
-    public async Task UpdateCart_AuthenticatedModeMergesOwnedAnonymousCartThroughXCart()
+    [Theory]
+    [InlineData("product-1")]
+    [InlineData(null)]
+    public async Task UpdateCart_AuthenticatedModeMergesOwnedAnonymousCartThroughXCart(string productId)
     {
         const string anonymousBuyerId = "ucp-anonymous-22222222222222222222222222222222";
         var sourceCart = CartOwnedByGeneratedBuyerJson.Replace("ucp-anonymous-generated", anonymousBuyerId, System.StringComparison.Ordinal);
@@ -291,7 +325,9 @@ public class UcpCartServiceTests
             .Replace("\"addItem\"", "\"mergeCart\"", System.StringComparison.Ordinal)
             .Replace("\"isAnonymous\":true", "\"isAnonymous\":false", System.StringComparison.Ordinal)
             .Replace("\"customerId\":\"anonymous\"", "\"customerId\":\"user-1\"", System.StringComparison.Ordinal)
-            .Replace("\"organizationId\":null", "\"organizationId\":\"org-1\"", System.StringComparison.Ordinal);
+            .Replace("\"organizationId\":null", "\"organizationId\":\"org-1\"", System.StringComparison.Ordinal)
+            .Replace("\"cart-1\"", "\"merged-cart\"", System.StringComparison.Ordinal)
+            .Replace("\"line-1\"", "\"merged-line\"", System.StringComparison.Ordinal);
         var executor = new StubXApiExecutor(sourceCart, mergedCart);
         var httpContextAccessor = new HttpContextAccessor
         {
@@ -326,7 +362,7 @@ public class UcpCartServiceTests
             },
             LineItems =
             {
-                new UcpCartLineItemRequest { Id = "line-1", ProductId = "product-1", Quantity = 1 },
+                new UcpCartLineItemRequest { Id = "line-1", ProductId = productId, Quantity = 1 },
             },
         }, TestContext.Current.CancellationToken);
 
@@ -336,7 +372,42 @@ public class UcpCartServiceTests
         Assert.Equal("user-1", mergeCommand["userId"]);
         Assert.Equal(true, mergeCommand["deleteAfterMerge"]);
         Assert.Equal("user-1", response.Cart.BuyerId);
+        Assert.Equal("merged-cart", response.Cart.Id);
         Assert.True(executor.Requests[1].User.Identity?.IsAuthenticated);
+    }
+
+    [Fact]
+    public async Task UpdateCart_InvalidLineDoesNotRemoveExistingItems()
+    {
+        var executor = new StubXApiExecutor(CartQueryJson, CartItemRemovedJson, CartItemRemovedJson);
+        var service = CreateService(executor);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.UpdateCart("cart-1", new UcpCartRequest
+        {
+            LineItems = { new UcpCartLineItemRequest { Id = "missing-line", Quantity = 1 } },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Equal(["UcpGetCart"], executor.OperationNames);
+    }
+
+    [Fact]
+    public async Task UpdateCart_QuantityOverflowDoesNotModifyCart()
+    {
+        var executor = new StubXApiExecutor(CartQueryJson);
+        var service = CreateService(executor);
+
+        var exception = await Assert.ThrowsAsync<UcpException>(() => service.UpdateCart("cart-1", new UcpCartRequest
+        {
+            LineItems =
+            {
+                new UcpCartLineItemRequest { ProductId = "product-1", Quantity = int.MaxValue },
+                new UcpCartLineItemRequest { ProductId = "product-1", Quantity = 1 },
+            },
+        }, TestContext.Current.CancellationToken));
+
+        Assert.Equal(ModuleConstants.ErrorCodes.InvalidRequest, exception.Code);
+        Assert.Equal(["UcpGetCart"], executor.OperationNames);
     }
 
     [Fact]
